@@ -1,7 +1,5 @@
 package com.drdisagree.xmorphclock.ui.home
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,15 +15,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Typeface
 import androidx.compose.ui.unit.dp
@@ -33,27 +30,27 @@ import androidx.compose.ui.unit.sp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.ElementKind
 import com.drdisagree.xmorphclock.engine.FaceFont
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialogFrame
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.GlassDialogFrame
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
 import com.drdisagree.xmorphclock.ui.editor.elementLabel
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
 fun AddElementDialog(visible: Boolean, onAdd: (ElementKind) -> Unit, onDismiss: () -> Unit) {
     val family by produceState<FontFamily?>(null) {
-        value = withContext(Dispatchers.Default) { FontFamily(Typeface(FaceFont.typeface(SYMBOLS, GLYPH_WEIGHT, GLYPH_WIDTH, GLYPH_HEIGHT))) }
+        value = withContext(Dispatchers.Default) {
+            FontFamily(Typeface(FaceFont.typeface(SYMBOLS, GLYPH_WEIGHT, GLYPH_WIDTH, GLYPH_HEIGHT)))
+        }
     }
     val list = rememberScrollState()
-    GlassDialogFrame(visible, onDismiss) {
+    ExpressiveDialogFrame(visible, onDismiss) {
         Text(
             stringResource(R.string.action_add_element),
-            style = MaterialTheme.typography.titleLarge,
-            color = OnInk,
-            modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 4.dp)
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp)
         )
         Column(
             Modifier
@@ -66,8 +63,8 @@ fun AddElementDialog(visible: Boolean, onAdd: (ElementKind) -> Unit, onDismiss: 
                 Text(
                     stringResource(label),
                     style = MaterialTheme.typography.labelLarge,
-                    color = OnInkMuted,
-                    modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 8.dp)
                 )
                 kinds.chunked(COLUMNS).forEach { row ->
                     Row(
@@ -87,20 +84,34 @@ fun AddElementDialog(visible: Boolean, onAdd: (ElementKind) -> Unit, onDismiss: 
 
 @Composable
 private fun ElementRow(kind: ElementKind, family: FontFamily?, onClick: () -> Unit, modifier: Modifier) {
-    Row(
-        modifier
-            .height(ROW_HEIGHT)
-            .clip(RowShape)
-            .background(OnInk.copy(alpha = ROW_FILL))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(ROW_HEIGHT),
+        shape = RowShape,
+        color = MaterialTheme.colorScheme.surfaceContainer
     ) {
-        Box(Modifier.size(GLYPH_BOX), contentAlignment = Alignment.Center) {
-            family?.let { Text(elementGlyph(kind), fontFamily = it, fontSize = GLYPH_SIZE, lineHeight = GLYPH_SIZE, color = OnInk) }
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(Modifier.size(GLYPH_BOX), contentAlignment = Alignment.Center) {
+                family?.let {
+                    Text(
+                        elementGlyph(kind),
+                        fontFamily = it,
+                        fontSize = GLYPH_SIZE,
+                        lineHeight = GLYPH_SIZE,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            FitText(
+                stringResource(elementLabel(kind)),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
-        FitText(stringResource(elementLabel(kind)), style = MaterialTheme.typography.labelLarge, color = OnInk)
     }
 }
 
@@ -118,7 +129,6 @@ private val ROW_HEIGHT = 48.dp
 private val LIST_MAX = 480.dp
 private val GLYPH_BOX = 22.dp
 private val GLYPH_SIZE = 20.sp
-private const val ROW_FILL = 0.06f
 private const val COLUMNS = 2
 private const val SYMBOLS = "res:symbols"
 private const val GLYPH_WEIGHT = 400

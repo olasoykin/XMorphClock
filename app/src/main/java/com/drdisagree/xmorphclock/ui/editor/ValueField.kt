@@ -5,9 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +13,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,19 +28,24 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 
 @Composable
 fun ValueField(display: String, editable: String, onCommit: (Float) -> Unit) {
     var editing by remember { mutableStateOf(false) }
-    val style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = TABULAR_FEATURE, color = OnInk, textAlign = TextAlign.End)
+    val style = MaterialTheme.typography.labelLarge.copy(
+        fontFeatureSettings = TABULAR_FEATURE,
+        color = MaterialTheme.colorScheme.onSurface,
+        textAlign = TextAlign.End
+    )
     AnimatedContent(
         targetState = editing,
         transitionSpec = { fadeIn(tween(FADE_IN_MS)) togetherWith fadeOut(tween(FADE_OUT_MS)) },
@@ -58,20 +62,20 @@ fun ValueField(display: String, editable: String, onCommit: (Float) -> Unit) {
                 field.text.replace(',', '.').toFloatOrNull()?.let(onCommit)
             }
             LaunchedEffect(Unit) { focus.requestFocus() }
-            Box(
-                Modifier
-                    .background(OnInk.copy(alpha = FIELD_FILL), FieldShape)
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            Surface(
+                shape = FieldShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest
             ) {
                 BasicTextField(
                     value = field,
                     onValueChange = { next -> if (next.text.length <= MAX_CHARS && next.text.all { it.isDigit() || it == '.' || it == ',' }) field = next },
                     singleLine = true,
                     textStyle = style,
-                    cursorBrush = SolidColor(Accent),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { commit() }),
                     modifier = Modifier
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
                         .width(FIELD_WIDTH)
                         .focusRequester(focus)
                         .onFocusChanged { state ->
@@ -81,21 +85,28 @@ fun ValueField(display: String, editable: String, onCommit: (Float) -> Unit) {
                 )
             }
         } else {
-            Text(
-                display,
-                style = style,
-                maxLines = 1,
-                modifier = Modifier
-                    .clickable(role = Role.Button, onClick = { editing = true })
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            )
+            val interaction = remember { MutableInteractionSource() }
+            val chipShape = expressivePillShape(interaction, restCorner = 10.dp, pressedCorner = 6.dp)
+            Surface(
+                onClick = { editing = true },
+                shape = chipShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                interactionSource = interaction,
+                modifier = Modifier.semantics { role = Role.Button }
+            ) {
+                Text(
+                    display,
+                    style = style,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
         }
     }
 }
 
 private val FieldShape = RoundedCornerShape(10.dp)
 private val FIELD_WIDTH = 64.dp
-private const val FIELD_FILL = 0.1f
 private const val MAX_CHARS = 6
 private const val FADE_IN_MS = 180
 private const val FADE_OUT_MS = 120

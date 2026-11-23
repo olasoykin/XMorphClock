@@ -22,7 +22,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -53,11 +52,18 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Badge
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -75,7 +81,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -87,7 +92,6 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -103,31 +107,23 @@ import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.EditScope
 import com.drdisagree.xmorphclock.domain.model.ElementKind
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
-import com.drdisagree.xmorphclock.domain.model.FaceKind
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.ModuleStatus
 import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.BackdropScreen
 import com.drdisagree.xmorphclock.ui.components.ClockFacePreview
-import com.drdisagree.xmorphclock.ui.components.GlassContainer
-import com.drdisagree.xmorphclock.ui.components.GlassDialog
-import com.drdisagree.xmorphclock.ui.components.GlassIconButton
-import com.drdisagree.xmorphclock.ui.components.GlassMenu
-import com.drdisagree.xmorphclock.ui.components.GlassMenuItem
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
-import com.drdisagree.xmorphclock.ui.components.MarqueeText
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialog
+import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
 import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.components.LocalFaceData
 import com.drdisagree.xmorphclock.ui.components.LocalSampleFaceData
 import com.drdisagree.xmorphclock.ui.components.LockscreenPreview
+import com.drdisagree.xmorphclock.ui.components.MarqueeText
 import com.drdisagree.xmorphclock.ui.components.StatusDot
 import com.drdisagree.xmorphclock.ui.components.StatusPill
 import com.drdisagree.xmorphclock.ui.components.StatusTone
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTab
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTabs
 import com.drdisagree.xmorphclock.ui.editor.ColorPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.ColorTarget
 import com.drdisagree.xmorphclock.ui.editor.EditorCanvas
@@ -139,26 +135,21 @@ import com.drdisagree.xmorphclock.ui.editor.FontPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.GroupingBar
 import com.drdisagree.xmorphclock.ui.editor.IconPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.elementLabel
-import com.drdisagree.xmorphclock.ui.theme.Accent
 import com.drdisagree.xmorphclock.ui.theme.DarkPalette
 import com.drdisagree.xmorphclock.ui.theme.LocalPalette
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-private val SheetShape = RoundedCornerShape(32.dp)
+private val SheetShape = RoundedCornerShape(28.dp)
 private val THUMB_WIDTH = 84.dp
 private val SHEET_MARGIN = 12.dp
 private val PREVIEW_SIDE_GAP = 16.dp
-private val SHEET_PADDING = 20.dp
 private val LABEL_GAP = 8.dp
-private val HEADER_HEIGHT = 36.dp
+private val HEADER_HEIGHT = 40.dp
 private val GRABBER_WIDTH = 36.dp
-private val GRABBER_HEIGHT = 5.dp
-private const val GRABBER_ALPHA = 0.3f
+private val GRABBER_HEIGHT = 4.dp
 private const val JUMP_ITEMS = 10
 private val HEADER_NUDGE = 6.dp
 private const val LEAD_ITEMS = 4
@@ -171,20 +162,18 @@ private const val MORPH_MS = 560
 private val FULL_BOTTOM = 84.dp
 private val DRAG_THRESHOLD = 32.dp
 private val GRID_FADE = 22.dp
-private val CHIPS_HEIGHT = 32.dp
-private val CHIPS_GAP = 14.dp
+private val CHIPS_HEIGHT = 40.dp
+private val CHIPS_GAP = 10.dp
 private const val HEADER_KEY = "header:"
 private const val FACES_EXPANDED_FRACTION = 0.72f
 private val TABS_INSET = 8.dp
 private val THUMB_RADIUS = 16.dp
 private val BLOCK_PADDING = 8.dp
 private val CLOCK_PADDING = 10.dp
-private val THUMB_RING = 2.dp
+private val THUMB_RING = 2.5.dp
 internal val ThumbInk = Color(0xFF1F2227)
 private val TABS_BOTTOM = 18.dp
 private val BADGE_TOP = 10.dp
-private val MENU_TOP = 60.dp
-private val MENU_END = 12.dp
 private val BADGE_INSET = 10.dp
 
 @Composable
@@ -313,8 +302,14 @@ fun HomeScreen(
         minOf(sheetScale + (1f - sheetScale) * full, fitScale)
     }
 
-    BackdropScreen(
-        content = {
+    val styleName = state.clockPreset?.face?.name ?: stringResource(R.string.menu_style_name)
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
+        Box(Modifier.fillMaxSize()) {
             BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
@@ -349,13 +344,12 @@ fun HomeScreen(
                     }
                 }
             }
-        },
-        overlay = {
+
             AnimatedContent(
                 targetState = Pair(editorState.grouping != null, editing),
                 transitionSpec = {
                     (fadeIn(tween(260, delayMillis = 80)) + slideInVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 }) togetherWith
-                            (fadeOut(tween(160)) + slideOutVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 })
+                        (fadeOut(tween(160)) + slideOutVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 })
                 },
                 label = "topBar"
             ) { (_, edit) ->
@@ -380,32 +374,84 @@ fun HomeScreen(
                         onToggleGuides = { guides = !guides }
                     )
                 } else {
-                    TopBar(state.moduleStatus, fullscreen, styleStatus.changed, { fullscreen = !fullscreen }, onOpenStatus) { menuOpen = true }
-                }
-            }
-            if (morph < 1f && previewHeight > 0.dp) {
-                CompositionLocalProvider(LocalPalette provides DarkPalette) {
-                    PreviewModeTabs(
-                        mode = state.previewMode,
-                        onModeChange = viewModel::onPreviewModeChange,
-                        height = lerp(MODE_TABS_HEIGHT, MODE_TABS_FULL_HEIGHT, full),
-                        textScale = (((previewHeight * previewScale() * aspect - TABS_INSET * 2).coerceAtMost(TABS_MAX_WIDTH)) / (TABS_DESIGN_WIDTH * LocalDensity.current.fontScale.coerceAtLeast(1f))).coerceIn(MIN_TABS_TEXT, 1f),
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .statusBarsPadding()
-                            .padding(top = 68.dp)
-                            .layout { measurable, _ ->
-                                val scale = previewScale()
-                                val height = previewHeight.toPx() * scale
-                                val width = (height * aspect - TABS_INSET.toPx() * 2f).roundToInt().coerceIn(0, TABS_MAX_WIDTH.roundToPx())
-                                val placeable = measurable.measure(Constraints.fixedWidth(width))
-                                val y = (height - TABS_BOTTOM.toPx() - placeable.height).roundToInt().coerceAtLeast(0)
-                                layout(placeable.width, y + placeable.height) { placeable.place(0, y) }
+                    TopBar(
+                        status = state.moduleStatus,
+                        fullscreen = fullscreen,
+                        unsaved = styleStatus.changed,
+                        menuOpen = menuOpen,
+                        onDismissMenu = { menuOpen = false },
+                        onOpenMenu = { menuOpen = true },
+                        onToggleFullscreen = { fullscreen = !fullscreen },
+                        onOpenStatus = onOpenStatus,
+                        menuContent = {
+                            val updatable = styleStatus.presetStyle
+                            if (styleStatus.changed && updatable != null) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_update_preset)) },
+                                    leadingIcon = { AppIcon(R.drawable.ic_save, tint = MaterialTheme.colorScheme.onSurface, size = 20.dp) },
+                                    trailingIcon = { Badge(containerColor = MaterialTheme.colorScheme.primary) },
+                                    onClick = {
+                                        menuOpen = false
+                                        viewModel.updatePreset(updatable)
+                                    }
+                                )
                             }
-                            .graphicsLayer { alpha = reveal * (1f - morph) * (1f - expand) }
+                            if (styleStatus.changed) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.menu_save_preset)) },
+                                    leadingIcon = { AppIcon(R.drawable.ic_plus, tint = MaterialTheme.colorScheme.onSurface, size = 20.dp) },
+                                    trailingIcon = if (updatable == null) {
+                                        { Badge(containerColor = MaterialTheme.colorScheme.primary) }
+                                    } else null,
+                                    onClick = {
+                                        menuOpen = false
+                                        savingStyle = styleName
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.tab_settings)) },
+                                leadingIcon = { AppIcon(R.drawable.ic_settings, tint = MaterialTheme.colorScheme.onSurface, size = 20.dp) },
+                                onClick = {
+                                    menuOpen = false
+                                    onOpenSettings()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_about)) },
+                                leadingIcon = { AppIcon(R.drawable.ic_info, tint = MaterialTheme.colorScheme.onSurface, size = 20.dp) },
+                                onClick = {
+                                    menuOpen = false
+                                    onOpenAbout()
+                                }
+                            )
+                        }
                     )
                 }
             }
+
+            if (morph < 1f && previewHeight > 0.dp) {
+                PreviewModeTabs(
+                    mode = state.previewMode,
+                    onModeChange = viewModel::onPreviewModeChange,
+                    height = lerp(MODE_TABS_HEIGHT, MODE_TABS_FULL_HEIGHT, full),
+                    textScale = (((previewHeight * previewScale() * aspect - TABS_INSET * 2).coerceAtMost(TABS_MAX_WIDTH)) / (TABS_DESIGN_WIDTH * LocalDensity.current.fontScale.coerceAtLeast(1f))).coerceIn(MIN_TABS_TEXT, 1f),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(top = 68.dp)
+                        .layout { measurable, _ ->
+                            val scale = previewScale()
+                            val height = previewHeight.toPx() * scale
+                            val width = (height * aspect - TABS_INSET.toPx() * 2f).roundToInt().coerceIn(0, TABS_MAX_WIDTH.roundToPx())
+                            val placeable = measurable.measure(Constraints.fixedWidth(width))
+                            val y = (height - TABS_BOTTOM.toPx() - placeable.height).roundToInt().coerceAtLeast(0)
+                            layout(placeable.width, y + placeable.height) { placeable.place(0, y) }
+                        }
+                        .graphicsLayer { alpha = reveal * (1f - morph) * (1f - expand) }
+                )
+            }
+
             AnimatedVisibility(
                 visible = liveWallpaper && !editing && !facesExpanded && previewHeight > 0.dp,
                 enter = fadeIn(tween(260)) + scaleIn(tween(320, easing = Emphasized), initialScale = 0.85f),
@@ -419,12 +465,13 @@ fun HomeScreen(
                         IntOffset((half - BADGE_INSET.toPx() - LIVE_BADGE_SIZE.toPx() / 2f).roundToInt(), 0)
                     }
             ) {
-                CompositionLocalProvider(LocalPalette provides DarkPalette) {
-                    LiveWallpaperBadge(onClick = { liveInfo = true })
-                }
+                LiveWallpaperBadge(onClick = { liveInfo = true })
             }
-            GlassContainer(
+
+            Surface(
                 shape = SheetShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 3.dp,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
@@ -467,7 +514,6 @@ fun HomeScreen(
                     } else {
                         FacesContent(
                             state = state,
-                            aspect = aspect,
                             expanded = facesExpanded,
                             onExpandedChange = { facesExpanded = it },
                             onTabChange = viewModel::onTabChange,
@@ -480,6 +526,7 @@ fun HomeScreen(
                     }
                 }
             }
+
             AddElementDialog(
                 visible = addingElement && !editing,
                 onAdd = { kind ->
@@ -535,46 +582,12 @@ fun HomeScreen(
                 onSave = { name -> naming?.let { viewModel.onDuplicate(it, name) } },
                 onDismiss = { naming = null }
             )
-            val styleName = state.clockPreset?.face?.name ?: stringResource(R.string.menu_style_name)
-            GlassMenu(visible = menuOpen && !editing, onDismiss = { menuOpen = false }, top = MENU_TOP, end = MENU_END) {
-                val updatable = styleStatus.presetStyle
-                if (styleStatus.changed && updatable != null) {
-                    GlassMenuItem(
-                        icon = R.drawable.ic_save,
-                        label = stringResource(R.string.menu_update_preset),
-                        badge = true,
-                        onClick = {
-                            menuOpen = false
-                            viewModel.updatePreset(updatable)
-                        }
-                    )
-                }
-                if (styleStatus.changed) {
-                    GlassMenuItem(
-                        icon = R.drawable.ic_plus,
-                        label = stringResource(R.string.menu_save_preset),
-                        badge = updatable == null,
-                        onClick = {
-                            menuOpen = false
-                            savingStyle = styleName
-                        }
-                    )
-                }
-                GlassMenuItem(R.drawable.ic_settings, stringResource(R.string.tab_settings), {
-                    menuOpen = false
-                    onOpenSettings()
-                })
-                GlassMenuItem(R.drawable.ic_info, stringResource(R.string.action_about), {
-                    menuOpen = false
-                    onOpenAbout()
-                })
-            }
             SavePresetDialog(
                 initialName = savingStyle,
                 onSave = { name -> viewModel.saveAsPreset(name) },
                 onDismiss = { savingStyle = null }
             )
-            GlassDialog(
+            ExpressiveDialog(
                 visible = liveInfo,
                 title = stringResource(R.string.live_wallpaper_title),
                 message = stringResource(R.string.live_wallpaper_message),
@@ -582,7 +595,7 @@ fun HomeScreen(
                 onDismiss = { liveInfo = false }
             )
         }
-    )
+    }
 }
 
 @Composable
@@ -634,7 +647,13 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
 }
 
 @Composable
-private fun PreviewModeTabs(mode: PreviewMode, onModeChange: (PreviewMode) -> Unit, height: Dp, modifier: Modifier = Modifier, textScale: Float = 1f) {
+private fun PreviewModeTabs(
+    mode: PreviewMode,
+    onModeChange: (PreviewMode) -> Unit,
+    height: Dp,
+    modifier: Modifier = Modifier,
+    textScale: Float = 1f
+) {
     val base = MaterialTheme.typography.labelMedium
     val style = base.copy(fontSize = base.fontSize * textScale, lineHeight = base.lineHeight * textScale)
     val labels = PreviewMode.entries.map { stringResource(it.label) }
@@ -646,17 +665,25 @@ private fun PreviewModeTabs(mode: PreviewMode, onModeChange: (PreviewMode) -> Un
         val minFit = (MIN_TAB_LABEL.value / style.fontSize.value).coerceAtMost(1f)
         val fit = if (widest > slot && widest > 0) (slot / widest).coerceIn(minFit, 1f) else 1f
         val shared = style.copy(fontSize = style.fontSize * fit, lineHeight = style.lineHeight * fit)
-        LiquidTabs(
-            selectedIndex = mode.ordinal,
-            onSelected = { onModeChange(PreviewMode.entries[it]) },
-            backdrop = LocalBackdrop.current,
-            tabsCount = PreviewMode.entries.size,
-            height = height,
-            adaptive = true,
-            modifier = Modifier.fillMaxWidth()
+        SingleChoiceSegmentedButtonRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(height.coerceAtLeast(36.dp))
         ) {
             PreviewMode.entries.forEachIndexed { index, entry ->
-                LiquidTab(onClick = { onModeChange(entry) }) {
+                val selected = entry == mode
+                SegmentedButton(
+                    selected = selected,
+                    onClick = { onModeChange(entry) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = PreviewMode.entries.size),
+                    icon = {},
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
                     Text(
                         labels[index],
                         style = shared,
@@ -708,9 +735,12 @@ private fun TopBar(
     status: ModuleStatus,
     fullscreen: Boolean,
     unsaved: Boolean,
+    menuOpen: Boolean,
+    onDismissMenu: () -> Unit,
+    onOpenMenu: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onOpenStatus: () -> Unit,
-    onOpenMenu: () -> Unit
+    menuContent: @Composable () -> Unit
 ) {
     Row(
         Modifier
@@ -723,7 +753,7 @@ private fun TopBar(
         Text(
             stringResource(R.string.app_name),
             style = MaterialTheme.typography.titleLarge,
-            color = OnInk,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
         StatusPill(
@@ -739,34 +769,46 @@ private fun TopBar(
                 ModuleStatus.ATTENTION -> StatusTone.WARNING
                 ModuleStatus.INACTIVE -> StatusTone.ERROR
             },
-            modifier = Modifier.clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onOpenStatus)
+            onClick = onOpenStatus
         )
         AnimatedVisibility(
             visible = fullscreen,
             enter = fadeIn(tween(220)) + scaleIn(tween(260, easing = Emphasized), initialScale = 0.8f),
             exit = fadeOut(tween(160)) + scaleOut(tween(200), targetScale = 0.8f)
         ) {
-            GlassIconButton(
-                R.drawable.ic_fullscreen_exit,
+            ExpressiveIconButton(
+                icon = R.drawable.ic_fullscreen_exit,
                 onClick = onToggleFullscreen,
                 description = stringResource(R.string.action_exit_fullscreen)
             )
         }
         val dot by animateFloatAsState(if (unsaved) 1f else 0f, tween(260, easing = Emphasized), label = "unsavedDot")
         Box {
-            GlassIconButton(R.drawable.ic_more, onOpenMenu, description = stringResource(R.string.action_more))
+            ExpressiveIconButton(
+                icon = R.drawable.ic_more,
+                onClick = onOpenMenu,
+                description = stringResource(R.string.action_more)
+            )
             StatusDot(
-                Accent,
+                MaterialTheme.colorScheme.primary,
                 size = 8.dp,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 8.dp, end = 8.dp)
+                    .padding(top = 6.dp, end = 6.dp)
                     .graphicsLayer {
                         alpha = dot
                         scaleX = dot
                         scaleY = dot
                     }
             )
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = onDismissMenu,
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ) {
+                menuContent()
+            }
         }
     }
 }
@@ -774,7 +816,6 @@ private fun TopBar(
 @Composable
 private fun FacesContent(
     state: HomeUiState,
-    aspect: Float,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onTabChange: (FaceTab) -> Unit,
@@ -805,20 +846,22 @@ private fun FacesContent(
                     }
                 }
         ) {
-            Box(
-                Modifier
+            Surface(
+                onClick = { onExpandedChange(!expanded) },
+                color = Color.Transparent,
+                modifier = Modifier
                     .fillMaxWidth()
                     .height(GRABBER_AREA)
-                    .clickable(interactionSource = null, indication = null, role = Role.Button) { onExpandedChange(!expanded) },
-                contentAlignment = Alignment.TopCenter
             ) {
-                Box(
-                    Modifier
-                        .padding(top = GRABBER_TOP)
-                        .size(GRABBER_WIDTH, GRABBER_HEIGHT)
-                        .clip(CircleShape)
-                        .background(OnInk.copy(alpha = GRABBER_ALPHA))
-                )
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    Box(
+                        Modifier
+                            .padding(top = GRABBER_TOP)
+                            .size(GRABBER_WIDTH, GRABBER_HEIGHT)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                    )
+                }
             }
             Row(
                 Modifier
@@ -838,7 +881,7 @@ private fun FacesContent(
                         Text(
                             stringResource(tabLabel(tab)),
                             style = MaterialTheme.typography.titleSmall,
-                            color = OnInk,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -849,7 +892,6 @@ private fun FacesContent(
                         height = HEADER_HEIGHT,
                         modifier = Modifier
                             .padding(top = TABS_GAP)
-                            .offset(x = (-4).dp)
                             .width(KIND_TABS_WIDTH)
                     )
                 }
@@ -911,14 +953,14 @@ private fun FaceGrid(
         }
         val activeSection by remember {
             derivedStateOf {
-                val sections = currentSections
-                val coverage = FloatArray(sections.size)
+                val list = currentSections
+                val coverage = FloatArray(list.size)
                 val rows = HashSet<Long>()
                 val info = grid.layoutInfo
                 val start = info.viewportStartOffset
                 val end = info.viewportEndOffset
                 info.visibleItemsInfo.forEach { item ->
-                    val section = sections.indexOfLast { it.headerIndex <= item.index }
+                    val section = list.indexOfLast { it.headerIndex <= item.index }
                     if (section < 0 || !rows.add(section.toLong() shl ROW_SHIFT or item.offset.y.toLong().and(ROW_MASK))) return@forEach
                     val top = item.offset.y.coerceAtLeast(start)
                     val bottom = (item.offset.y + item.size.height).coerceAtMost(end)
@@ -977,7 +1019,7 @@ private fun FaceGrid(
                         Text(
                             categoryLabel(section.category),
                             style = MaterialTheme.typography.labelLarge,
-                            color = OnInkMuted,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 2.dp, top = 4.dp)
                         )
                     }
@@ -1010,15 +1052,22 @@ private fun FaceThumb(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?
 ) {
-    val labelColor by animateColorAsState(if (selected) OnInk else OnInkMuted, label = "label")
-    val ring by animateColorAsState(if (selected) Accent else Color.Transparent, label = "thumbRing")
+    val labelColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        label = "label"
+    )
+    val ring by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        label = "thumbRing"
+    )
     val shape = RoundedCornerShape(THUMB_RADIUS)
     Column(
         Modifier
             .fillMaxWidth()
+            .clip(shape)
             .combinedClickable(
                 interactionSource = null,
-                indication = null,
+                indication = ripple(),
                 role = Role.RadioButton,
                 onLongClick = onLongClick,
                 onClick = onClick
@@ -1058,32 +1107,13 @@ private fun FaceThumb(
     }
 }
 
-@Composable
-private fun SelectedBadge(visible: Boolean, modifier: Modifier = Modifier) {
-    val accent = Accent
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(200)) + scaleIn(tween(260, easing = Emphasized), initialScale = 0.4f),
-        exit = fadeOut(tween(160)) + scaleOut(tween(200), targetScale = 0.4f),
-        modifier = modifier
-    ) {
-        Box(
-            Modifier
-                .size(20.dp)
-                .drawBehind { drawCircle(accent) },
-            contentAlignment = Alignment.Center
-        ) {
-            AppIcon(R.drawable.ic_check, tint = Color.White, size = 12.dp)
-        }
-    }
-}
 private val KEYBOARD_SHEET = 280.dp
 private const val KEYBOARD_MS = 280
-private val MODE_TABS_HEIGHT = 32.dp
+private val MODE_TABS_HEIGHT = 36.dp
 private val MODE_TABS_FULL_HEIGHT = 44.dp
 private val TABS_GAP = 6.dp
 private val TITLE_HEIGHT = 24.dp
-private val KIND_TABS_WIDTH = 156.dp
+private val KIND_TABS_WIDTH = 164.dp
 private const val ROW_SHIFT = 32
 private const val ROW_MASK = 0xFFFFFFFFL
 private val TABS_MAX_WIDTH = 260.dp

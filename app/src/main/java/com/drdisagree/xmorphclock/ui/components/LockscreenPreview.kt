@@ -30,8 +30,6 @@ import com.drdisagree.xmorphclock.ui.theme.Hairline
 import com.drdisagree.xmorphclock.ui.theme.Ink
 import com.drdisagree.xmorphclock.ui.theme.LocalPalette
 import com.drdisagree.xmorphclock.ui.theme.SurfaceHigh
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
 @Composable
 fun LockscreenPreview(
@@ -48,7 +46,6 @@ fun LockscreenPreview(
     val wallpaper = if (showWallpaper) LocalWallpaper.current else null
     val depth = if (showWallpaper) LocalDepth.current else null
     val geometry = LocalClockGeometry.current
-    val layer = rememberLayerBackdrop()
     val density = LocalDensity.current
     val reporter = remember { ExtentsReporter() }
     reporter.onChange = onExtents
@@ -68,7 +65,6 @@ fun LockscreenPreview(
         Box(
             Modifier
                 .fillMaxSize()
-                .layerBackdrop(layer)
                 .drawWithContent {
                     drawContent()
                     drawRect(Color.Black, alpha = sleepProgress())
@@ -79,9 +75,8 @@ fun LockscreenPreview(
                 showWallpaper -> Box(
                     Modifier
                         .fillMaxSize()
-                        .background(Brush.verticalGradient(listOf(Color(0xFF1C2333), Ink)))
+                        .background(Brush.verticalGradient(listOf(Color(0xFF1C2333), Color(0xFF0D111A))))
                 )
-
                 else -> Box(
                     Modifier
                         .fillMaxSize()
@@ -112,7 +107,7 @@ fun LockscreenPreview(
                 }
             )
         }
-        CompositionLocalProvider(LocalBackdrop provides layer, LocalPalette provides DarkPalette) {
+        CompositionLocalProvider(LocalPalette provides DarkPalette) {
             overlay()
         }
     }

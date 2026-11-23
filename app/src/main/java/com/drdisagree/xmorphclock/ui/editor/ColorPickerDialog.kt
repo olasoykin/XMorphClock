@@ -49,7 +49,8 @@ import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.FaceGradient
 import com.drdisagree.xmorphclock.ui.components.DialogButton
-import com.drdisagree.xmorphclock.ui.components.GlassDialogFrame
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialogFrame
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
 import com.drdisagree.xmorphclock.ui.theme.OnInk
 import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import java.util.Locale
@@ -83,19 +84,29 @@ fun ColorPickerDialog(visible: Boolean, initial: String, resolve: (String) -> In
         stops = stops.toMutableList().also { it[if (gradient) active else 0] = hsv }
     }
     val colors = stops.map { Color(it.argb) }
-    GlassDialogFrame(visible, onDismiss) {
+    ExpressiveDialogFrame(visible, onDismiss) {
         Text(
             stringResource(R.string.color_custom),
             style = MaterialTheme.typography.titleLarge,
-            color = OnInk,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 12.dp)
         )
-        if (allowGradient) Row(
-            Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            TextTile(stringResource(R.string.color_solid), !gradient, { gradient = false })
-            TextTile(stringResource(R.string.color_gradient), gradient, { gradient = true })
+        if (allowGradient) {
+            val modeLabels = listOf(R.string.color_solid, R.string.color_gradient)
+            ExpressiveSegmentedTabs(
+                count = modeLabels.size,
+                selectedIndex = if (gradient) 1 else 0,
+                onSelect = { gradient = it == 1 },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 16.dp)
+            ) { index, selected ->
+                Text(
+                    stringResource(modeLabels[index]),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
+                )
+            }
         }
         SaturationValueField(
             hue = current.hue,

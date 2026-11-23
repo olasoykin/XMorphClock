@@ -3,9 +3,10 @@ package com.drdisagree.xmorphclock.ui.editor
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -24,11 +26,14 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +48,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -50,19 +57,15 @@ import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.StyleKey
 import com.drdisagree.xmorphclock.ui.components.AppIcon
+import com.drdisagree.xmorphclock.ui.components.ExpressiveButton
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSlider
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidButton
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidSlider
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import com.drdisagree.xmorphclock.ui.theme.onTint
 import java.util.Locale
 import kotlin.math.roundToInt
-
-private val TileShape = RoundedCornerShape(18.dp)
 
 @Composable
 fun EditorBlock(title: String, value: String? = null, trailing: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
@@ -76,7 +79,7 @@ fun EditorBlock(title: String, value: String? = null, trailing: (@Composable () 
             Text(
                 title,
                 style = MaterialTheme.typography.labelLarge,
-                color = OnInkMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -86,7 +89,7 @@ fun EditorBlock(title: String, value: String? = null, trailing: (@Composable () 
                 Text(
                     value,
                     style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = TABULAR),
-                    color = OnInk,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1
                 )
             }
@@ -129,14 +132,18 @@ fun RangeSlider(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(48.dp)
             .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         start?.invoke()
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-            LiquidSlider(value, onChange, range, LocalBackdrop.current)
+            ExpressiveSlider(
+                value = value,
+                onValueChange = onChange,
+                valueRange = range
+            )
         }
         end?.invoke()
     }
@@ -150,27 +157,48 @@ fun OptionTile(
     height: Dp = 76.dp,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 18.dp, pressedCorner = 12.dp)
     val fill by animateColorAsState(
-        if (selected) Accent.copy(alpha = 0.2f) else OnInk.copy(alpha = 0.07f),
+        if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
         tween(TILE_FADE),
         label = "tile"
     )
-    val outline by animateColorAsState(if (selected) Accent else Color.Transparent, tween(TILE_FADE), label = "tileOutline")
-    Box(
-        Modifier
-            .size(width, height)
-            .clip(TileShape)
-            .drawBehind { drawRect(fill) }
-            .border(TILE_OUTLINE, outline, TileShape)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
-        contentAlignment = Alignment.Center,
-        content = content
+    val contentColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        tween(TILE_FADE),
+        label = "tileInk"
     )
+    val outline by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        tween(TILE_FADE),
+        label = "tileOutline"
+    )
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = fill,
+        contentColor = contentColor,
+        border = if (selected) BorderStroke(TILE_OUTLINE, outline) else null,
+        interactionSource = interaction,
+        modifier = Modifier
+            .size(width, height)
+            .semantics {
+                role = Role.RadioButton
+                this.selected = selected
+            }
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center, content = content)
+    }
 }
 
 @Composable
 fun TextTile(text: String, selected: Boolean, onClick: () -> Unit, width: Dp = 104.dp) {
-    val color by animateColorAsState(if (selected) Accent else OnInk, tween(TILE_FADE), label = "tileText")
+    val color by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        tween(TILE_FADE),
+        label = "tileText"
+    )
     OptionTile(selected, onClick, width = width, height = 48.dp) {
         FitText(
             text,
@@ -183,7 +211,12 @@ fun TextTile(text: String, selected: Boolean, onClick: () -> Unit, width: Dp = 1
 
 @Composable
 fun Swatch(color: Color, selected: Boolean, dynamic: Boolean = false, onClick: () -> Unit) {
-    val ring by animateColorAsState(if (selected) Accent else Color.Transparent, tween(TILE_FADE), label = "ring")
+    val interaction = remember { MutableInteractionSource() }
+    val ring by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        tween(TILE_FADE),
+        label = "ring"
+    )
     Box(
         Modifier
             .size(48.dp)
@@ -192,7 +225,13 @@ fun Swatch(color: Color, selected: Boolean, dynamic: Boolean = false, onClick: (
             .padding(4.dp)
             .clip(CircleShape)
             .background(color)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+            .selectable(
+                selected = selected,
+                interactionSource = interaction,
+                indication = ripple(),
+                role = Role.RadioButton,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         if (dynamic) {
@@ -208,39 +247,34 @@ fun Swatch(color: Color, selected: Boolean, dynamic: Boolean = false, onClick: (
 
 @Composable
 fun StateSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier
-            .padding(end = 8.dp)
-            .clip(CircleShape)
-            .background(OnInk.copy(alpha = SWITCH_TRACK))
-            .padding(2.dp)
-    ) {
-        listOf(false to R.string.toggle_off, true to R.string.toggle_on).forEach { (value, label) ->
-            val fill by animateColorAsState(if (on == value) OnInk.copy(alpha = SWITCH_SELECTED) else Color.Transparent, tween(TILE_FADE), label = "stateFill")
-            val text by animateColorAsState(if (on == value) OnInk else OnInkMuted, tween(TILE_FADE), label = "stateText")
-            Box(
-                Modifier
-                    .clip(CircleShape)
-                    .background(fill)
-                    .clickable(role = Role.Tab) { onChange(value) }
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(stringResource(label), style = MaterialTheme.typography.labelMedium, color = text, maxLines = 1)
-            }
-        }
+    val labels = listOf(R.string.toggle_off, R.string.toggle_on)
+    ExpressiveSegmentedTabs(
+        count = labels.size,
+        selectedIndex = if (on) 1 else 0,
+        onSelect = { onChange(it == 1) },
+        modifier = Modifier.padding(end = 8.dp)
+    ) { index, selected ->
+        Text(
+            stringResource(labels[index]),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
     }
 }
 
 private val DYNAMIC_DOT = 8.dp
 private const val DOT_CONTRAST = 0.5f
 private const val DOT_ALPHA = 0.55f
-private const val SWITCH_TRACK = 0.08f
-private const val SWITCH_SELECTED = 0.16f
 
 @Composable
 fun CustomSwatch(colors: List<Color>?, onClick: () -> Unit) {
-    val ring by animateColorAsState(if (colors != null) Accent else Color.Transparent, tween(TILE_FADE), label = "customRing")
+    val interaction = remember { MutableInteractionSource() }
+    val ring by animateColorAsState(
+        if (colors != null) MaterialTheme.colorScheme.primary else Color.Transparent,
+        tween(TILE_FADE),
+        label = "customRing"
+    )
     val description = stringResource(R.string.color_custom)
     Box(
         Modifier
@@ -263,7 +297,12 @@ fun CustomSwatch(colors: List<Color>?, onClick: () -> Unit) {
                     drawCircle(Color.White, size.minDimension * 0.18f)
                 }
             }
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = ripple(),
+                role = Role.Button,
+                onClick = onClick
+            )
             .semantics { contentDescription = description }
     )
 }
@@ -276,10 +315,18 @@ fun ActionRow(text: String, color: Color, @DrawableRes icon: Int = R.drawable.ic
             .padding(top = 20.dp, bottom = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        LiquidButton(onClick, LocalBackdrop.current, tint = color, height = 44.dp, horizontalPadding = 20.dp) {
-            AppIcon(icon, tint = onTint(color), size = 18.dp)
+        val contentColor = onTint(color)
+        ExpressiveButton(
+            onClick = onClick,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = color,
+                contentColor = contentColor
+            ),
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            AppIcon(icon, tint = contentColor, size = 18.dp)
             Spacer(Modifier.width(8.dp))
-            Text(text, style = MaterialTheme.typography.labelLarge, color = onTint(color))
+            Text(text, style = MaterialTheme.typography.labelLarge, color = contentColor)
         }
     }
 }

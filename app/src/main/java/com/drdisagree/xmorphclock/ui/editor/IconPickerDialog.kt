@@ -1,21 +1,22 @@
 package com.drdisagree.xmorphclock.ui.editor
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,21 +27,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Typeface
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.engine.FaceFont
-import com.drdisagree.xmorphclock.ui.components.GlassDialogFrame
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialogFrame
 import com.drdisagree.xmorphclock.ui.components.InputField
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -56,11 +58,11 @@ fun IconPickerDialog(visible: Boolean, font: String, selected: String?, onPick: 
         .map { (label, icons) -> label to icons.filter { needle.isEmpty() || it.name.contains(needle, ignoreCase = true) } }
         .filter { it.second.isNotEmpty() }
     val list = rememberScrollState()
-    GlassDialogFrame(visible, onDismiss) {
+    ExpressiveDialogFrame(visible, onDismiss) {
         Text(
             stringResource(R.string.choose_icon),
             style = MaterialTheme.typography.titleLarge,
-            color = OnInk,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 12.dp)
         )
         InputField(
@@ -81,7 +83,7 @@ fun IconPickerDialog(visible: Boolean, font: String, selected: String?, onPick: 
                 Text(
                     stringResource(R.string.no_icons),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = OnInkMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 8.dp, top = 20.dp)
                 )
             }
@@ -89,7 +91,7 @@ fun IconPickerDialog(visible: Boolean, font: String, selected: String?, onPick: 
                 Text(
                     stringResource(label),
                     style = MaterialTheme.typography.labelLarge,
-                    color = OnInkMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp)
                 )
                 icons.chunked(COLUMNS).forEach { row ->
@@ -110,24 +112,40 @@ fun IconPickerDialog(visible: Boolean, font: String, selected: String?, onPick: 
 
 @Composable
 private fun IconTile(icon: IconEntry, family: FontFamily?, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    Box(
-        modifier
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 14.dp, pressedCorner = 10.dp)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        border = if (selected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+        interactionSource = interaction,
+        modifier = modifier
             .aspectRatio(1f)
-            .clip(TileShape)
-            .background(if (selected) Accent.copy(alpha = SELECTED_FILL) else OnInk.copy(alpha = TILE_FILL))
-            .clickable(role = Role.Button, onClickLabel = icon.name, onClick = onClick),
-        contentAlignment = Alignment.Center
+            .semantics {
+                role = Role.Button
+                this.selected = selected
+                contentDescription = icon.name
+            }
     ) {
-        family?.let { Text(icon.glyph, fontFamily = it, fontSize = GLYPH_SIZE, lineHeight = GLYPH_SIZE, color = OnInk) }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            family?.let {
+                Text(
+                    icon.glyph,
+                    fontFamily = it,
+                    fontSize = GLYPH_SIZE,
+                    lineHeight = GLYPH_SIZE,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
     }
 }
 
-private val TileShape = RoundedCornerShape(14.dp)
 private val LIST_MAX = 440.dp
 private val GLYPH_SIZE = 24.sp
 private const val COLUMNS = 5
-private const val TILE_FILL = 0.06f
-private const val SELECTED_FILL = 0.22f
 private const val SYMBOLS = "res:symbols"
 private const val GLYPH_WEIGHT = 400
 private const val GLYPH_WIDTH = 100

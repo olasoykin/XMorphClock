@@ -21,13 +21,13 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,20 +56,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.BackdropScreen
 import com.drdisagree.xmorphclock.ui.components.ClockFacePreview
+import com.drdisagree.xmorphclock.ui.components.ExpressiveTonalButton
 import com.drdisagree.xmorphclock.ui.components.LocalWallpaper
 import com.drdisagree.xmorphclock.ui.components.LockNotification
 import com.drdisagree.xmorphclock.ui.components.LockscreenBackground
 import com.drdisagree.xmorphclock.ui.components.restartApp
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -116,10 +113,10 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
         label = "large"
     )
 
-    BackdropScreen(
-        content = { LockscreenBackground(LocalWallpaper.current, Modifier.fillMaxSize()) },
-        overlay = { OnboardingOverlay(state, stage, { stage = it }, { sleep.value }, { large.value }, swipe, viewModel, onFinished) }
-    )
+    Box(Modifier.fillMaxSize()) {
+        LockscreenBackground(LocalWallpaper.current, Modifier.fillMaxSize())
+        OnboardingOverlay(state, stage, { stage = it }, { sleep.value }, { large.value }, swipe, viewModel, onFinished)
+    }
 }
 
 @Composable
@@ -269,7 +266,7 @@ private fun Staggered(visible: Boolean, index: Int, content: @Composable () -> U
 @Composable
 private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
     val pulse by rememberInfiniteTransition(label = "hint").animateFloat(
-        initialValue = 0.35f,
+        initialValue = 0.65f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(1_400), RepeatMode.Reverse),
         label = "pulse"
@@ -279,40 +276,41 @@ private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
         enter = fadeIn(tween(600, delayMillis = 400)) + slideInVertically(tween(700, easing = Emphasized)) { it / 2 },
         exit = fadeOut(tween(240))
     ) {
-        Column(
+        Box(
             Modifier
                 .fillMaxWidth()
-                .padding(bottom = 20.dp)
-                .clickable(
-                    enabled = ready,
-                    interactionSource = null,
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onUnlock
-                ),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(bottom = 24.dp),
+            contentAlignment = Alignment.Center
         ) {
-            AnimatedVisibility(
-                visible = ready,
-                enter = fadeIn(tween(320)) + scaleIn(tween(420, easing = Emphasized), initialScale = 0.6f) + expandVertically(tween(420, easing = Emphasized)),
-                exit = fadeOut(tween(180)) + scaleOut(tween(240), targetScale = 0.6f) + shrinkVertically(tween(320, easing = Emphasized))
+            ExpressiveTonalButton(
+                onClick = onUnlock,
+                enabled = ready,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
             ) {
-                AppIcon(R.drawable.ic_lock_open, tint = OnInk, size = 22.dp)
+                AnimatedVisibility(
+                    visible = ready,
+                    enter = fadeIn(tween(320)) + scaleIn(tween(420, easing = Emphasized), initialScale = 0.6f) + expandVertically(tween(420, easing = Emphasized)),
+                    exit = fadeOut(tween(180)) + scaleOut(tween(240), targetScale = 0.6f) + shrinkVertically(tween(320, easing = Emphasized))
+                ) {
+                    AppIcon(
+                        R.drawable.ic_lock_open,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        size = 20.dp,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                }
+                AnimatedContent(
+                    targetState = ready,
+                    transitionSpec = { fadeIn(tween(320, delayMillis = 80)) togetherWith fadeOut(tween(160)) },
+                    label = "hintText"
+                ) { isReady ->
+                    Text(
+                        stringResource(if (isReady) R.string.hint_swipe_to_open else R.string.hint_finish_setup),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.graphicsLayer { alpha = if (isReady) pulse else 1f }
+                    )
+                }
             }
-            AnimatedContent(
-                targetState = ready,
-                transitionSpec = { fadeIn(tween(320, delayMillis = 80)) togetherWith fadeOut(tween(160)) },
-                label = "hintText"
-            ) { isReady ->
-                Text(
-                    stringResource(if (isReady) R.string.hint_swipe_to_open else R.string.hint_finish_setup),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = OnInkMuted,
-                    modifier = Modifier.graphicsLayer { alpha = pulse }
-                )
-            }
-            Spacer(Modifier.height(4.dp))
         }
     }
 }

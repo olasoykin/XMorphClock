@@ -4,7 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,25 +28,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.WeatherProvider
 import com.drdisagree.xmorphclock.ui.components.AppIcon
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSwitch
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
-import com.drdisagree.xmorphclock.ui.components.glass
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidToggle
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
-import com.drdisagree.xmorphclock.ui.theme.Surface
-import com.kyant.backdrop.backdrops.emptyBackdrop
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -162,38 +159,53 @@ private fun ToggleTile(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val surface = Surface
-    val accent = Accent
-    val tint by animateColorAsState(
-        if (checked) accent.copy(alpha = 0.2f).compositeOver(surface) else surface,
-        tween(360),
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 28.dp, pressedCorner = 20.dp)
+    val containerColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+        tween(320),
         label = "tileTint"
     )
-    val badge by animateColorAsState(if (checked) accent else OnInk.copy(alpha = 0.08f), tween(360), label = "badge")
-    val glyph by animateColorAsState(if (checked) Color.White else OnInk, tween(360), label = "glyph")
-    Column(
-        modifier
-            .glass(LocalBackdrop.current, TileShape, tint = { tint })
-            .clickable(interactionSource = null, indication = null, role = Role.Switch) { onCheckedChange(!checked) }
-            .padding(16.dp)
+    val badgeColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+        tween(320),
+        label = "badge"
+    )
+    val glyphColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        tween(320),
+        label = "glyph"
+    )
+    val titleColor = if (checked) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val summaryColor = if (checked) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Card(
+        onClick = { onCheckedChange(!checked) },
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        interactionSource = interaction,
+        modifier = modifier.semantics { role = Role.Switch }
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .drawBehind { drawCircle(badge) },
-                contentAlignment = Alignment.Center
-            ) {
-                AppIcon(icon, tint = glyph, size = 22.dp)
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = CircleShape,
+                    color = badgeColor,
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        AppIcon(icon, tint = glyphColor, size = 22.dp)
+                    }
+                }
+                Spacer(Modifier.weight(1f))
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
+            FitText(title, style = MaterialTheme.typography.titleSmall, color = titleColor)
+            Spacer(Modifier.height(2.dp))
+            Text(summary, style = MaterialTheme.typography.bodySmall, color = summaryColor, minLines = 2, maxLines = 2)
+            Spacer(Modifier.height(12.dp))
+            ExpressiveSwitch(checked = checked, onCheckedChange = onCheckedChange)
         }
-        Spacer(Modifier.height(28.dp))
-        FitText(title, style = MaterialTheme.typography.titleSmall, color = OnInk)
-        Spacer(Modifier.height(2.dp))
-        Text(summary, style = MaterialTheme.typography.bodySmall, color = OnInkMuted, minLines = 2, maxLines = 2)
-        Spacer(Modifier.height(14.dp))
-        LiquidToggle(checked, onCheckedChange, emptyBackdrop())
     }
 }
 

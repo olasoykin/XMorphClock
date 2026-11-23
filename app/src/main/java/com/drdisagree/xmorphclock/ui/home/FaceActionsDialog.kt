@@ -19,9 +19,7 @@ import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.FaceKind
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.ui.components.DialogButton
-import com.drdisagree.xmorphclock.ui.components.GlassDialogFrame
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialogFrame
 
 @Composable
 fun FaceActionsDialog(
@@ -34,18 +32,18 @@ fun FaceActionsDialog(
     LaunchedEffect(preset) { if (preset != null) last = preset }
     val shown = preset ?: last ?: return
     val mine = FaceKind.of(shown.style)?.isMine(shown.style) == true
-    GlassDialogFrame(preset != null, onDismiss) {
+    ExpressiveDialogFrame(preset != null, onDismiss) {
         Text(
             shown.face.name,
-            style = MaterialTheme.typography.titleLarge,
-            color = OnInk,
-            modifier = Modifier.padding(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 8.dp)
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 8.dp)
         )
         Text(
             stringResource(if (mine) R.string.face_actions_mine else R.string.face_actions_preset),
             style = MaterialTheme.typography.bodyMedium,
-            color = OnInkMuted,
-            modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp)
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
         )
         Row(
             Modifier

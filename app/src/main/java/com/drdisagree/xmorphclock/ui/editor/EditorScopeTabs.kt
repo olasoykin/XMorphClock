@@ -1,5 +1,6 @@
 package com.drdisagree.xmorphclock.ui.editor
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -9,37 +10,30 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.EditScope
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTab
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTabs
-import com.drdisagree.xmorphclock.ui.theme.OnInk
 
 @Composable
 fun EditorScopeTabs(
     scope: EditScope,
     onScopeChange: (EditScope) -> Unit,
     modifier: Modifier = Modifier,
-    height: Dp = 44.dp
+    @Suppress("UNUSED_PARAMETER") height: Dp = 44.dp
 ) {
-    LiquidTabs(
+    val entries = EditScope.entries
+    ExpressiveSegmentedTabs(
+        count = entries.size,
         selectedIndex = scope.ordinal,
-        onSelected = { onScopeChange(EditScope.entries[it]) },
-        backdrop = LocalBackdrop.current,
-        tabsCount = EditScope.entries.size,
-        height = height,
-        modifier = modifier
-    ) {
-        EditScope.entries.forEach { entry ->
-            LiquidTab(onClick = { onScopeChange(entry) }) {
-                FitText(
-                    stringResource(scopeLabel(entry)),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = OnInk,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
-            }
-        }
+        onSelect = { onScopeChange(entries[it]) },
+        modifier = modifier.fillMaxWidth()
+    ) { index, selected ->
+        val entry = entries[index]
+        FitText(
+            stringResource(scopeLabel(entry)),
+            style = MaterialTheme.typography.labelLarge,
+            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 

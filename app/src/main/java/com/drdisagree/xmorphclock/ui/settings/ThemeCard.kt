@@ -10,41 +10,34 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.ThemeMode
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTab
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTabs
-import com.drdisagree.xmorphclock.ui.theme.OnInk
 
 @Composable
 internal fun ThemeCard(mode: ThemeMode, onModeChange: (ThemeMode) -> Unit) {
-    GlassCard {
+    SectionCard {
         Text(
             stringResource(R.string.section_appearance),
             style = MaterialTheme.typography.titleSmall,
-            color = OnInk,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(start = 20.dp, top = 18.dp, bottom = 12.dp)
         )
-        LiquidTabs(
+        val entries = ThemeMode.entries
+        ExpressiveSegmentedTabs(
+            count = entries.size,
             selectedIndex = mode.ordinal,
-            onSelected = { onModeChange(ThemeMode.entries[it]) },
-            backdrop = LocalBackdrop.current,
-            tabsCount = ThemeMode.entries.size,
-            height = 44.dp,
+            onSelect = { onModeChange(entries[it]) },
             modifier = Modifier
                 .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
                 .fillMaxWidth()
-        ) {
-            ThemeMode.entries.forEach { entry ->
-                LiquidTab(onClick = { onModeChange(entry) }) {
-                    FitText(
-                        stringResource(themeLabel(entry)),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = OnInk,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    )
-                }
-            }
+        ) { index, selected ->
+            val entry = entries[index]
+            FitText(
+                stringResource(themeLabel(entry)),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
         }
     }
 }

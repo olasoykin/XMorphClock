@@ -22,8 +22,17 @@ android {
         versionName = "1.0.6"
     }
 
+    signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     val keystorePropertiesFile = rootProject.file("keystore.properties")
-    var releaseSigning = signingConfigs.getByName("debug")
+    var releaseSigning = signingConfigs.getByName("debugConfig")
 
     try {
         val keystoreProperties = Properties()
@@ -42,27 +51,21 @@ android {
 
     buildTypes {
         debug {
-            signingConfig = releaseSigning
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
         release {
-            optimization {
-                enable = true
-            }
+            isMinifyEnabled = true
             signingConfig = releaseSigning
         }
         create("dev") {
             initWith(getByName("release"))
-            optimization {
-                enable = true
-            }
+            isMinifyEnabled = true
             signingConfig = releaseSigning
             matchingFallbacks += listOf("release")
         }
         create("review") {
             initWith(getByName("release"))
-            optimization {
-                enable = true
-            }
+            isMinifyEnabled = true
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release")
         }
@@ -82,9 +85,11 @@ android {
 
 androidComponents {
     onVariants { variant ->
-        variant.outputs.forEach { output ->
-            if (output is VariantOutputImpl) {
-                output.outputFileName = "XMorphClock ${android.defaultConfig.versionName}.apk"
+        if (variant.buildType != "debug") {
+            variant.outputs.forEach { output ->
+                if (output is VariantOutputImpl) {
+                    output.outputFileName = "XMorphClock ${android.defaultConfig.versionName}.apk"
+                }
             }
         }
     }
@@ -113,9 +118,8 @@ dependencies {
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
     implementation(libs.kotlinx.serialization.core)
-    implementation(libs.kyant.backdrop)
-    implementation(libs.kyant.shapes)
-    implementation(libs.libxposed.service)
+    // implementation(libs.kyant.backdrop)
+    // implementation(libs.kyant.shapes)
     implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.health.connect)
     implementation(libs.mlkit.subject.segmentation)

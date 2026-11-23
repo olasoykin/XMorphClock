@@ -8,20 +8,15 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,13 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,16 +37,10 @@ import com.drdisagree.xmorphclock.domain.model.WeatherProvider
 import com.drdisagree.xmorphclock.domain.model.WeatherSettings
 import com.drdisagree.xmorphclock.domain.model.WeatherState
 import com.drdisagree.xmorphclock.domain.model.WeatherStatus
-import com.drdisagree.xmorphclock.ui.components.AppIcon
+import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
 import com.drdisagree.xmorphclock.ui.components.FitText
-import com.drdisagree.xmorphclock.ui.components.GlassIconButton
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTab
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidTabs
 import com.drdisagree.xmorphclock.ui.components.rememberSpin
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import java.text.DateFormat
 import java.util.Date
 
@@ -69,24 +54,24 @@ fun WeatherCard(
 ) {
     var custom by remember(state.settings.hasCustomLocation) { mutableStateOf(state.settings.hasCustomLocation) }
     val settings = state.settings
-    GlassCard {
+    SectionCard {
         Row(
             Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.weather_live), style = MaterialTheme.typography.titleSmall, color = OnInk)
+                Text(stringResource(R.string.weather_live), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     statusText(state),
                     style = MaterialTheme.typography.bodySmall,
-                    color = OnInkMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             val spin by rememberSpin(state.status == WeatherStatus.UPDATING, REFRESH_SPIN_MS)
-            GlassIconButton(
-                R.drawable.ic_refresh,
+            ExpressiveIconButton(
+                icon = R.drawable.ic_refresh,
                 onClick = onRefresh,
                 size = 40.dp,
                 description = stringResource(R.string.action_refresh),
@@ -138,8 +123,8 @@ fun WeatherCard(
                     Text(
                         stringResource(R.string.weather_city_not_found),
                         style = MaterialTheme.typography.bodySmall,
-                        color = OnInkMuted,
-                        modifier = Modifier.padding(start = 28.dp, top = 6.dp)
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 24.dp, top = 6.dp)
                     )
                 }
             }
@@ -178,24 +163,23 @@ private fun Choice(label: String, options: List<String>, selected: Int, onSelect
     Text(
         label,
         style = MaterialTheme.typography.labelLarge,
-        color = OnInkMuted,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 20.dp, top = 8.dp, bottom = 8.dp)
     )
-    LiquidTabs(
+    ExpressiveSegmentedTabs(
+        count = options.size,
         selectedIndex = selected,
-        onSelected = onSelect,
-        backdrop = LocalBackdrop.current,
-        tabsCount = options.size,
-        height = 44.dp,
+        onSelect = onSelect,
         modifier = Modifier
             .padding(start = 16.dp, end = 16.dp, bottom = if (last) 16.dp else 4.dp)
             .fillMaxWidth()
-    ) {
-        options.forEachIndexed { index, option ->
-            LiquidTab(onClick = { onSelect(index) }) {
-                FitText(option, style = MaterialTheme.typography.labelLarge, color = OnInk, modifier = Modifier.padding(horizontal = 4.dp))
-            }
-        }
+    ) { index, isSelected ->
+        FitText(
+            options[index],
+            style = MaterialTheme.typography.labelLarge,
+            color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
     }
 }
 
@@ -208,57 +192,41 @@ private fun TextInput(value: String, hint: String, password: Boolean, commitOnDo
         onCommit(text)
         focus.clearFocus()
     }
-    Row(
-        Modifier
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            if (!commitOnDone) onCommit(it)
+        },
+        placeholder = { Text(hint, style = MaterialTheme.typography.bodyMedium) },
+        singleLine = true,
+        shape = RoundedCornerShape(18.dp),
+        textStyle = MaterialTheme.typography.bodyMedium,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (password) KeyboardType.Password else KeyboardType.Text,
+            imeAction = if (commitOnDone && !password) ImeAction.Search else ImeAction.Done
+        ),
+        keyboardActions = KeyboardActions(onSearch = { commit() }, onDone = { commit() }),
+        trailingIcon = {
+            AnimatedVisibility(
+                visible = pending,
+                enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f),
+                exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.6f)
+            ) {
+                ExpressiveIconButton(
+                    icon = R.drawable.ic_check,
+                    onClick = { commit() },
+                    size = 36.dp,
+                    filled = true,
+                    description = stringResource(R.string.action_save)
+                )
+            }
+        },
+        modifier = Modifier
             .padding(start = 16.dp, end = 16.dp, top = 8.dp)
             .fillMaxWidth()
-            .height(44.dp)
-            .clip(CircleShape)
-            .background(OnInk.copy(alpha = FIELD_FILL))
-            .padding(start = 18.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            if (text.isEmpty()) {
-                Text(hint, style = MaterialTheme.typography.bodyMedium, color = OnInkMuted)
-            }
-            BasicTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    if (!commitOnDone) onCommit(it)
-                },
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = OnInk),
-                cursorBrush = SolidColor(Accent),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = if (password) KeyboardType.Password else KeyboardType.Text,
-                    imeAction = if (commitOnDone && !password) ImeAction.Search else ImeAction.Done
-                ),
-                keyboardActions = KeyboardActions(onSearch = { commit() }, onDone = { commit() }),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-        AnimatedVisibility(
-            visible = pending,
-            enter = fadeIn(tween(180)) + scaleIn(tween(220), initialScale = 0.6f),
-            exit = fadeOut(tween(140)) + scaleOut(tween(180), targetScale = 0.6f)
-        ) {
-            Box(
-                Modifier
-                    .padding(start = 8.dp)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Accent)
-                    .clickable(role = Role.Button, onClickLabel = stringResource(R.string.action_save)) { commit() },
-                contentAlignment = Alignment.Center
-            ) {
-                AppIcon(R.drawable.ic_check, tint = Color.White, size = 18.dp)
-            }
-        }
-    }
+    )
 }
 
 private val INTERVALS = listOf(1, 3, 6)
-private const val FIELD_FILL = 0.08f
 private const val REFRESH_SPIN_MS = 900

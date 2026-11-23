@@ -60,7 +60,6 @@ import com.drdisagree.xmorphclock.domain.model.ItemBounds
 import com.drdisagree.xmorphclock.domain.model.SnapResult
 import com.drdisagree.xmorphclock.engine.ClockFaceView
 import com.drdisagree.xmorphclock.engine.FaceFont
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
 import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.components.LocalDepth
 import com.drdisagree.xmorphclock.ui.components.LocalFaceData
@@ -72,8 +71,6 @@ import com.drdisagree.xmorphclock.ui.theme.DarkPalette
 import com.drdisagree.xmorphclock.ui.theme.Hairline
 import com.drdisagree.xmorphclock.ui.theme.Ink
 import com.drdisagree.xmorphclock.ui.theme.LocalPalette
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlinx.coroutines.flow.conflate
@@ -104,7 +101,6 @@ fun EditorCanvas(
     onAlign: (String, FaceAlign) -> Unit = { _, _ -> },
     overlay: @Composable BoxScope.() -> Unit = {}
 ) {
-    val layer = rememberLayerBackdrop()
     val wallpaper = LocalWallpaper.current
     val depth = LocalDepth.current
     val geometry = LocalClockGeometry.current
@@ -175,11 +171,7 @@ fun EditorCanvas(
             }
         }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .layerBackdrop(layer)
-        ) {
+        Box(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -456,7 +448,7 @@ fun EditorCanvas(
         AlignPill(alignAnchor.centerX(), alignAnchor.bottom + pad, widthPx, heightPx, aligned?.second, alignRect != null && grouping == null) { align ->
             aligned?.let { onAlign(it.first, align) }
         }
-        CompositionLocalProvider(LocalBackdrop provides layer, LocalPalette provides DarkPalette) {
+        CompositionLocalProvider(LocalPalette provides DarkPalette) {
             overlay()
         }
     }

@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,30 +18,26 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.DepthSettings
 import com.drdisagree.xmorphclock.domain.model.DepthStatus
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSlider
+import com.drdisagree.xmorphclock.ui.components.ExpressiveSwitch
+import com.drdisagree.xmorphclock.ui.components.ExpressiveTonalButton
 import com.drdisagree.xmorphclock.ui.components.StatusGlyph
 import com.drdisagree.xmorphclock.ui.components.StatusTone
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidSlider
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidToggle
 import com.drdisagree.xmorphclock.ui.components.toneTextColor
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
-import com.kyant.backdrop.backdrops.emptyBackdrop
 import kotlin.math.roundToInt
 
 @Composable
@@ -56,48 +51,51 @@ fun DepthCard(
     onWidgetsFrontChange: (Boolean) -> Unit,
     onRetry: () -> Unit
 ) {
-    GlassCard {
-        Row(
-            Modifier
+    SectionCard {
+        Surface(
+            onClick = { onEnabledChange(!settings.enabled) },
+            shape = TileShape,
+            color = Color.Transparent,
+            modifier = Modifier
                 .fillMaxWidth()
-                .clickable(interactionSource = null, indication = null, role = Role.Switch) { onEnabledChange(!settings.enabled) }
-                .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .semantics { role = Role.Switch }
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.depth_switch), style = MaterialTheme.typography.titleSmall, color = OnInk)
-                AnimatedContent(
-                    targetState = status,
-                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(140)) },
-                    label = "depthStatus"
-                ) { current ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (current != DepthStatus.OFF && toneOf(current) == StatusTone.BUSY) StatusGlyph(StatusTone.BUSY, size = 12.dp)
-                        Text(
-                            stringResource(depthStatusLabel(current)),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (current == DepthStatus.OFF) OnInkMuted else toneTextColor(toneOf(current))
-                        )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.depth_switch), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                    AnimatedContent(
+                        targetState = status,
+                        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(140)) },
+                        label = "depthStatus"
+                    ) { current ->
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (current != DepthStatus.OFF && toneOf(current) == StatusTone.BUSY) StatusGlyph(StatusTone.BUSY, size = 12.dp)
+                            Text(
+                                stringResource(depthStatusLabel(current)),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (current == DepthStatus.OFF) MaterialTheme.colorScheme.onSurfaceVariant else toneTextColor(toneOf(current))
+                            )
+                        }
                     }
                 }
+                Spacer(Modifier.width(12.dp))
+                ExpressiveSwitch(settings.enabled, onEnabledChange)
             }
-            Spacer(Modifier.width(12.dp))
-            LiquidToggle(settings.enabled, onEnabledChange, emptyBackdrop())
         }
         AnimatedVisibility(
             visible = status == DepthStatus.NO_SUBJECT || status == DepthStatus.UNAVAILABLE,
             enter = fadeIn(tween(240)) + expandVertically(tween(320)),
             exit = fadeOut(tween(160)) + shrinkVertically(tween(280))
         ) {
-            Box(Modifier.padding(start = 20.dp, bottom = 8.dp)) {
-                Text(
-                    stringResource(R.string.action_retry),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Accent,
-                    modifier = Modifier
-                        .clickable(role = Role.Button, onClick = onRetry)
-                        .padding(vertical = 6.dp)
-                )
+            Box(Modifier.padding(start = 20.dp, bottom = 12.dp)) {
+                ExpressiveTonalButton(onClick = onRetry) {
+                    Text(stringResource(R.string.action_retry), style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
@@ -107,34 +105,42 @@ fun DepthCard(
         exit = fadeOut(tween(160)) + shrinkVertically(tween(280))
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            GlassCard {
-                Row(
-                    Modifier
+            SectionCard {
+                Surface(
+                    onClick = { onWidgetsFrontChange(!settings.widgetsFront) },
+                    shape = TileShape,
+                    color = Color.Transparent,
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(interactionSource = null, indication = null, role = Role.Switch) { onWidgetsFrontChange(!settings.widgetsFront) }
-                        .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .semantics { role = Role.Switch }
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.depth_widgets_front), style = MaterialTheme.typography.titleSmall, color = OnInk)
-                        Text(stringResource(R.string.depth_widgets_front_summary), style = MaterialTheme.typography.bodySmall, color = OnInkMuted)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.depth_widgets_front), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                            Text(stringResource(R.string.depth_widgets_front_summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        ExpressiveSwitch(settings.widgetsFront, onWidgetsFrontChange)
                     }
-                    Spacer(Modifier.width(12.dp))
-                    LiquidToggle(settings.widgetsFront, onWidgetsFrontChange, emptyBackdrop())
                 }
             }
-            GlassCard {
+            SectionCard {
                 Row(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         stringResource(R.string.depth_opacity),
                         style = MaterialTheme.typography.titleSmall,
-                        color = OnInk,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
                     Text(
                         stringResource(R.string.percent_value, (opacity * PERCENT).roundToInt()),
                         style = MaterialTheme.typography.labelLarge,
-                        color = OnInk
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 Box(
@@ -144,11 +150,10 @@ fun DepthCard(
                         .padding(horizontal = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    LiquidSlider(
+                    ExpressiveSlider(
                         value = opacity,
                         onValueChange = onOpacityDrag,
                         valueRange = MIN_OPACITY..1f,
-                        backdrop = LocalBackdrop.current,
                         onValueChangeFinished = { onOpacityChange(opacity) }
                     )
                 }

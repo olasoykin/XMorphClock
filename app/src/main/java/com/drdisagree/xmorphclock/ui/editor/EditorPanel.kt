@@ -1,5 +1,6 @@
 package com.drdisagree.xmorphclock.ui.editor
 
+import android.os.Build
 import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -19,10 +20,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -82,8 +83,8 @@ import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.engine.FaceFont
 import com.drdisagree.xmorphclock.engine.FaceImages
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.GlassSupport
 import com.drdisagree.xmorphclock.ui.components.InputField
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
 import com.drdisagree.xmorphclock.ui.theme.Accent
 import com.drdisagree.xmorphclock.ui.theme.Negative
@@ -132,20 +133,23 @@ fun EditorPanel(
                 enter = fadeIn(tween(HANDLE_MS)) + expandVertically(tween(HANDLE_MS)),
                 exit = fadeOut(tween(HANDLE_OUT_MS)) + shrinkVertically(tween(HANDLE_MS))
             ) {
-                Box(
-                    Modifier
+                Surface(
+                    onClick = onSheetTap,
+                    shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    color = Color.Transparent,
+                    modifier = Modifier
                         .fillMaxWidth()
                         .height(HANDLE_AREA)
-                        .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onSheetTap),
-                    contentAlignment = Alignment.TopCenter
                 ) {
-                    Box(
-                        Modifier
-                            .padding(top = HANDLE_TOP)
-                            .size(HANDLE_WIDTH, HANDLE_HEIGHT)
-                            .clip(CircleShape)
-                            .background(OnInk.copy(alpha = HANDLE_ALPHA))
-                    )
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = HANDLE_ALPHA),
+                            modifier = Modifier
+                                .padding(top = HANDLE_TOP)
+                                .size(HANDLE_WIDTH, HANDLE_HEIGHT)
+                        ) {}
+                    }
                 }
             }
             EditorScopeTabs(
@@ -734,28 +738,35 @@ private fun FontSelector(font: String, name: String, onClick: () -> Unit) {
         }
     }
     val shown by animateFloatAsState(if (family != null) 1f else 0f, tween(240), label = "fontSelector")
-    Row(
-        Modifier
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 18.dp, pressedCorner = 12.dp)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        interactionSource = interaction,
+        modifier = Modifier
             .padding(horizontal = 20.dp)
             .fillMaxWidth()
-            .clip(FontSelectorShape)
-            .background(OnInk.copy(alpha = FONT_SELECTOR_FILL))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                stringResource(R.string.font_sample),
-                fontFamily = family,
-                fontSize = 24.sp,
-                color = OnInk,
-                maxLines = 1,
-                modifier = Modifier.graphicsLayer { alpha = shown }
-            )
-            Text(name, style = MaterialTheme.typography.bodySmall, color = OnInkMuted, maxLines = 1)
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.font_sample),
+                    fontFamily = family,
+                    fontSize = 24.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    modifier = Modifier.graphicsLayer { alpha = shown }
+                )
+                Text(name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            AppIcon(R.drawable.ic_chevron, tint = MaterialTheme.colorScheme.onSurfaceVariant, size = 16.dp)
         }
-        AppIcon(R.drawable.ic_chevron, tint = OnInkMuted, size = 16.dp)
     }
 }
 
@@ -792,7 +803,7 @@ private fun FontSection(state: EditorUiState, layer: FaceLayer, viewModel: Edito
     if (!aod) EditorBlock(stringResource(R.string.label_effect)) {
         val selectedEffect = viewModel.effect()
         TileRow {
-            items(FaceTextEffect.entries.filter { it != FaceTextEffect.GLASS || GlassSupport.full }) { effect ->
+            items(FaceTextEffect.entries.filter { it != FaceTextEffect.GLASS || Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU }) { effect ->
                 TextTile(stringResource(effectLabel(effect)), selectedEffect == effect, {
                     viewModel.setEffect(effect)
                 })

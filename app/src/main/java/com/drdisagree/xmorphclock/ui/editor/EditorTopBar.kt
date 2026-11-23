@@ -1,9 +1,8 @@
 package com.drdisagree.xmorphclock.ui.editor
 
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -12,26 +11,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.GlassContainer
-import com.drdisagree.xmorphclock.ui.components.GlassIconButton
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.onTint
-
-private val PillShape = RoundedCornerShape(50)
+import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 
 @Composable
 fun EditorTopBar(
@@ -58,14 +54,14 @@ fun EditorTopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            GlassIconButton(
-                R.drawable.ic_cross,
+            ExpressiveIconButton(
+                icon = R.drawable.ic_cross,
                 onClick = onCancel,
                 description = stringResource(R.string.action_cancel)
             )
             Crossfade(guides, animationSpec = tween(220), label = "guides") { shown ->
-                GlassIconButton(
-                    if (shown) R.drawable.ic_guides else R.drawable.ic_guides_off,
+                ExpressiveIconButton(
+                    icon = if (shown) R.drawable.ic_guides else R.drawable.ic_guides_off,
                     onClick = onToggleGuides,
                     description = stringResource(if (shown) R.string.action_hide_guides else R.string.action_show_guides)
                 )
@@ -78,18 +74,17 @@ fun EditorTopBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Crossfade(fullscreen, animationSpec = tween(220), label = "fullscreen") { full ->
-                GlassIconButton(
-                    if (full) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen,
+                ExpressiveIconButton(
+                    icon = if (full) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen,
                     onClick = onToggleFullscreen,
                     description = stringResource(if (full) R.string.action_exit_fullscreen else R.string.action_fullscreen)
                 )
             }
-            GlassIconButton(
-                R.drawable.ic_check,
+            ExpressiveIconButton(
+                icon = R.drawable.ic_check,
                 onClick = onSave,
                 description = stringResource(R.string.action_save),
-                tint = Accent,
-                iconTint = onTint(Accent)
+                filled = true
             )
         }
     }
@@ -103,7 +98,12 @@ private fun HistoryPill(
     onRedo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    GlassContainer(shape = PillShape, modifier = modifier) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp,
+        modifier = modifier
+    ) {
         Row(Modifier.padding(horizontal = 4.dp)) {
             HistoryButton(R.drawable.ic_undo, stringResource(R.string.action_undo), canUndo, onUndo)
             HistoryButton(R.drawable.ic_redo, stringResource(R.string.action_redo), canRedo, onRedo)
@@ -113,18 +113,28 @@ private fun HistoryPill(
 
 @Composable
 private fun HistoryButton(icon: Int, description: String, enabled: Boolean, onClick: () -> Unit) {
-    val alpha by animateFloatAsState(if (enabled) 1f else DISABLED_ALPHA, tween(200), label = "history")
-    Box(
-        Modifier
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 22.dp, pressedCorner = 10.dp)
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        shape = shape,
+        interactionSource = interaction,
+        colors = IconButtonDefaults.iconButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA)
+        ),
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
             .size(44.dp)
-            .clip(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = description }
-            .graphicsLayer { this.alpha = alpha },
-        contentAlignment = Alignment.Center
     ) {
-        AppIcon(icon, size = 20.dp)
+        AppIcon(
+            icon = icon,
+            tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA),
+            size = 20.dp
+        )
     }
 }
 
-private const val DISABLED_ALPHA = 0.35f
+private const val DISABLED_ALPHA = 0.38f

@@ -18,19 +18,7 @@ class StatusRepositoryImpl(
     private val files: ReportFileSource
 ) : StatusRepository {
 
-    override val framework: Flow<FrameworkInfo?> = service.service.map { service ->
-        service ?: return@map null
-        try {
-            FrameworkInfo(
-                name = service.frameworkName,
-                version = service.frameworkVersion,
-                apiVersion = service.apiVersion,
-                scope = service.scope
-            )
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    override val framework: Flow<FrameworkInfo?> = service.service
 
     override val hookReport: Flow<HookReport?> = reports.report
 

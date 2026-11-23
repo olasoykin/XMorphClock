@@ -9,7 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.drdisagree.xmorphclock.R
-import com.drdisagree.xmorphclock.ui.components.GlassDialog
+import com.drdisagree.xmorphclock.ui.components.ExpressiveDialog
 
 @Composable
 fun PresetTransferDialog(transfer: PresetTransfer?, onDismiss: () -> Unit) {
@@ -32,7 +32,7 @@ fun PresetTransferDialog(transfer: PresetTransfer?, onDismiss: () -> Unit) {
         PresetTransferStatus.UNSUPPORTED_VERSION -> stringResource(R.string.transfer_unsupported)
         PresetTransferStatus.DAMAGED -> stringResource(R.string.transfer_damaged)
     }
-    GlassDialog(
+    ExpressiveDialog(
         visible = transfer != null,
         title = title,
         message = message,

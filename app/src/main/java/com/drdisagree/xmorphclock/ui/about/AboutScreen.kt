@@ -5,8 +5,6 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +17,10 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,20 +36,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.BuildConfig
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
 import com.drdisagree.xmorphclock.ui.components.PageScaffold
-import com.drdisagree.xmorphclock.ui.components.glass
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import com.drdisagree.xmorphclock.ui.components.openUrl
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkFaint
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 
 @Composable
 fun AboutScreen(onBack: () -> Unit, onOpenLicenses: () -> Unit) {
@@ -85,7 +80,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLicenses: () -> Unit) {
                 Text(
                     stringResource(R.string.about_footer),
                     style = MaterialTheme.typography.labelMedium,
-                    color = OnInkFaint,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -127,22 +122,25 @@ private fun Identity() {
         Text(
             stringResource(R.string.app_name),
             style = MaterialTheme.typography.headlineMedium,
-            color = OnInk,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 14.dp)
         )
-        Text(
-            stringResource(R.string.version_label, BuildConfig.VERSION_NAME),
-            style = MaterialTheme.typography.labelMedium,
-            color = OnInkMuted,
-            modifier = Modifier
-                .padding(top = 8.dp)
-                .glass(LocalBackdrop.current, CircleShape)
-                .padding(horizontal = 12.dp, vertical = 5.dp)
-        )
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            Text(
+                stringResource(R.string.version_label, BuildConfig.VERSION_NAME),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+            )
+        }
         Text(
             stringResource(R.string.about_tagline),
             style = MaterialTheme.typography.bodyMedium,
-            color = OnInkMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 14.dp, start = 24.dp, end = 24.dp)
         )
@@ -154,34 +152,42 @@ private fun LinkTile(@DrawableRes icon: Int, title: String, subtitle: String, on
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) PRESSED_SCALE else 1f, tween(PRESS_MS), label = "press")
-    Column(
-        Modifier
+    val shape = expressivePillShape(interaction, restCorner = 28.dp, pressedCorner = 20.dp)
+    Card(
+        onClick = onClick,
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        interactionSource = interaction,
+        modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
             }
-            .glass(LocalBackdrop.current, TileShape)
-            .clip(TileShape)
-            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
-            .padding(18.dp)
     ) {
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(Accent.copy(alpha = ICON_FILL)),
-            contentAlignment = Alignment.Center
-        ) {
-            AppIcon(icon, tint = Accent, size = 20.dp)
+        Column(Modifier.padding(18.dp)) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    AppIcon(icon, tint = MaterialTheme.colorScheme.onPrimaryContainer, size = 20.dp)
+                }
+            }
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 18.dp)
+            )
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
-        Text(title, style = MaterialTheme.typography.titleMedium, color = OnInk, maxLines = 1, modifier = Modifier.padding(top = 18.dp))
-        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = OnInkMuted, maxLines = 1)
     }
 }
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-private val TileShape = RoundedCornerShape(28.dp)
 private val IconShape = RoundedCornerShape(18.dp)
 private val TILE_GAP = 12.dp
 private val ENTER_SHIFT = 24.dp
@@ -189,4 +195,3 @@ private const val ENTER_MS = 520
 private const val STAGGER_MS = 70
 private const val PRESS_MS = 160
 private const val PRESSED_SCALE = 0.96f
-private const val ICON_FILL = 0.16f

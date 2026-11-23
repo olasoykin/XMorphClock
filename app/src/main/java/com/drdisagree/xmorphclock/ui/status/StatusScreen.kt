@@ -17,11 +17,11 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -31,6 +31,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,7 +43,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -58,20 +60,13 @@ import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.ClockAttachState
 import com.drdisagree.xmorphclock.domain.model.HookSignal
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.GlassIconButton
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
+import com.drdisagree.xmorphclock.ui.components.ExpressiveButton
+import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
 import com.drdisagree.xmorphclock.ui.components.PageScaffold
 import com.drdisagree.xmorphclock.ui.components.StatusGlyph
 import com.drdisagree.xmorphclock.ui.components.StatusTone
-import com.drdisagree.xmorphclock.ui.components.glass
-import com.drdisagree.xmorphclock.ui.components.liquid.LiquidButton
 import com.drdisagree.xmorphclock.ui.components.rememberSpin
-import com.drdisagree.xmorphclock.ui.theme.Accent
-import com.drdisagree.xmorphclock.ui.theme.Hairline
 import com.drdisagree.xmorphclock.ui.theme.Negative
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkFaint
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 import com.drdisagree.xmorphclock.ui.theme.Warning
 import com.drdisagree.xmorphclock.ui.theme.onTint
 import java.text.SimpleDateFormat
@@ -82,7 +77,6 @@ import kotlinx.coroutines.delay
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private val CardShape = RoundedCornerShape(28.dp)
 private val TileShape = RoundedCornerShape(20.dp)
-private val CopyTint = Color(0xFFFF8D28)
 private val RING_SIZE = 112.dp
 private val RING_STROKE = 6.dp
 private const val RING_GAP = 14f
@@ -122,16 +116,27 @@ fun StatusScreen(viewModel: StatusViewModel, onBack: () -> Unit) {
                 enter = fadeIn(tween(260)) + expandVertically(tween(360, easing = Emphasized)),
                 exit = fadeOut(tween(180)) + shrinkVertically(tween(300, easing = Emphasized))
             ) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .glass(LocalBackdrop.current, CardShape)
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Card(
+                    shape = CardShape,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(stringResource(R.string.section_errors), style = MaterialTheme.typography.titleSmall, color = Negative)
-                    errors.forEach { error ->
-                        Text(error, style = MaterialTheme.typography.bodySmall, color = OnInkMuted)
+                    Column(
+                        Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.section_errors),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        errors.forEach { error ->
+                            Text(
+                                error,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
                     }
                 }
             }
@@ -169,30 +174,33 @@ fun StatusScreen(viewModel: StatusViewModel, onBack: () -> Unit) {
             DepthModelRow(state.depthModel)
         }
         item(key = "actions") {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .glass(LocalBackdrop.current, CardShape)
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Card(
+                shape = CardShape,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(stringResource(R.string.report_help_title), style = MaterialTheme.typography.titleMedium, color = OnInk)
-                Text(stringResource(R.string.report_help_body), style = MaterialTheme.typography.bodySmall, color = OnInkMuted)
-                Spacer(Modifier.height(8.dp))
-                PillButton(
-                    stringResource(
-                        when (state.save) {
-                            SaveState.IDLE -> R.string.action_save_report
-                            SaveState.SAVING -> R.string.action_saving
-                            SaveState.SAVED -> R.string.action_saved
-                            SaveState.FAILED -> R.string.action_save_failed
-                        }
-                    ),
-                    if (state.save == SaveState.FAILED) Warning else CopyTint,
-                    { saveLauncher.launch(reportFileName()) },
-                    icon = R.drawable.ic_save,
-                    spinning = state.save == SaveState.SAVING
-                )
+                Column(
+                    Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(stringResource(R.string.report_help_title), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(stringResource(R.string.report_help_body), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    PillButton(
+                        stringResource(
+                            when (state.save) {
+                                SaveState.IDLE -> R.string.action_save_report
+                                SaveState.SAVING -> R.string.action_saving
+                                SaveState.SAVED -> R.string.action_saved
+                                SaveState.FAILED -> R.string.action_save_failed
+                            }
+                        ),
+                        if (state.save == SaveState.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        { saveLauncher.launch(reportFileName()) },
+                        icon = R.drawable.ic_save,
+                        spinning = state.save == SaveState.SAVING
+                    )
+                }
             }
         }
     }
@@ -263,97 +271,101 @@ private fun Hero(steps: List<StatusStep>, overall: StepState) {
     val sweep = remember { Animatable(0f) }
     LaunchedEffect(Unit) { sweep.animateTo(1f, tween(1_100, easing = Emphasized)) }
     val colors = steps.map { step -> animateColorAsState(stateColor(step.state), tween(500), label = "segment").value }
-    val track = Hairline
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .glass(LocalBackdrop.current, CardShape)
-            .padding(20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(20.dp)
+    val track = MaterialTheme.colorScheme.outlineVariant
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Box(
-            Modifier
-                .size(RING_SIZE)
-                .drawBehind {
-                    val stroke = RING_STROKE.toPx()
-                    val inset = stroke / 2f
-                    val arcSize = Size(size.width - stroke, size.height - stroke)
-                    val count = colors.size.coerceAtLeast(1)
-                    val slot = 360f / count
-                    val gap = RING_GAP
-                    colors.forEachIndexed { index, color ->
-                        val start = -90f + index * slot + gap / 2f
-                        val length = (slot - gap) * sweep.value
-                        drawArc(track, start, slot - gap, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
-                        drawArc(color, start, length, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
-                    }
-                },
-            contentAlignment = Alignment.Center
+        Row(
+            Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            AnimatedContent(
-                targetState = passed,
-                transitionSpec = {
-                    (fadeIn(tween(260)) + slideInVertically(tween(320)) { it / 2 }) togetherWith
-                            (fadeOut(tween(140)) + slideOutVertically(tween(320)) { -it / 2 })
-                },
-                label = "passed"
-            ) { value ->
-                Text(
-                    stringResource(R.string.status_ring_count, value, steps.size),
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = OnInk
-                )
-            }
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            AnimatedContent(
-                targetState = overall,
-                transitionSpec = { fadeIn(tween(300, delayMillis = 80)) togetherWith fadeOut(tween(160)) using SizeTransform(clip = false) },
-                label = "heroTitle"
-            ) { target ->
-                Text(
-                    stringResource(
-                        when (target) {
-                            StepState.OK -> R.string.status_hero_ok
-                            StepState.FAILED -> R.string.status_hero_failed
-                            else -> R.string.status_hero_waiting
+            Box(
+                Modifier
+                    .size(RING_SIZE)
+                    .drawBehind {
+                        val stroke = RING_STROKE.toPx()
+                        val inset = stroke / 2f
+                        val arcSize = Size(size.width - stroke, size.height - stroke)
+                        val count = colors.size.coerceAtLeast(1)
+                        val slot = 360f / count
+                        val gap = RING_GAP
+                        colors.forEachIndexed { index, color ->
+                            val start = -90f + index * slot + gap / 2f
+                            val length = (slot - gap) * sweep.value
+                            drawArc(track, start, slot - gap, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(color, start, length, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
                         }
-                    ),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = OnInk
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = passed,
+                    transitionSpec = {
+                        (fadeIn(tween(260)) + slideInVertically(tween(320)) { it / 2 }) togetherWith
+                                (fadeOut(tween(140)) + slideOutVertically(tween(320)) { -it / 2 })
+                    },
+                    label = "passed"
+                ) { value ->
+                    Text(
+                        stringResource(R.string.status_ring_count, value, steps.size),
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AnimatedContent(
+                    targetState = overall,
+                    transitionSpec = { fadeIn(tween(300, delayMillis = 80)) togetherWith fadeOut(tween(160)) using SizeTransform(clip = false) },
+                    label = "heroTitle"
+                ) { target ->
+                    Text(
+                        stringResource(
+                            when (target) {
+                                StepState.OK -> R.string.status_hero_ok
+                                StepState.FAILED -> R.string.status_hero_failed
+                                else -> R.string.status_hero_waiting
+                            }
+                        ),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Text(
+                    pluralStringResource(R.plurals.status_ring_summary, steps.size, passed, steps.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Text(
-                pluralStringResource(R.plurals.status_ring_summary, steps.size, passed, steps.size),
-                style = MaterialTheme.typography.bodySmall,
-                color = OnInkMuted
-            )
         }
     }
 }
 
 @Composable
 private fun Chain(steps: List<StatusStep>, restarting: Boolean, onRestart: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .glass(LocalBackdrop.current, CardShape)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        steps.forEachIndexed { index, step ->
-            val previous = steps.getOrNull(index - 1)
-            val next = steps.getOrNull(index + 1)
-            ChainRow(
-                step = step,
-                index = index,
-                topLinked = previous?.state == StepState.OK && step.state == StepState.OK,
-                bottomLinked = next != null && step.state == StepState.OK && next.state == StepState.OK,
-                first = index == 0,
-                last = next == null,
-                restarting = restarting,
-                onRestart = onRestart
-            )
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+            steps.forEachIndexed { index, step ->
+                val previous = steps.getOrNull(index - 1)
+                val next = steps.getOrNull(index + 1)
+                ChainRow(
+                    step = step,
+                    index = index,
+                    topLinked = previous?.state == StepState.OK && step.state == StepState.OK,
+                    bottomLinked = next != null && step.state == StepState.OK && next.state == StepState.OK,
+                    first = index == 0,
+                    last = next == null,
+                    restarting = restarting,
+                    onRestart = onRestart
+                )
+            }
         }
     }
 }
@@ -369,8 +381,8 @@ private fun ChainRow(
     restarting: Boolean,
     onRestart: () -> Unit
 ) {
-    val hairline = Hairline
-    val linked = OnInkMuted
+    val hairline = MaterialTheme.colorScheme.outlineVariant
+    val linked = MaterialTheme.colorScheme.onSurfaceVariant
     val top by animateColorAsState(if (topLinked) linked else hairline, tween(420), label = "top")
     val bottom by animateColorAsState(if (bottomLinked) linked else hairline, tween(420), label = "bottom")
     val appear = remember { Animatable(0f) }
@@ -409,7 +421,7 @@ private fun ChainRow(
                 .weight(1f)
                 .padding(vertical = 10.dp)
         ) {
-            Text(step.title, style = MaterialTheme.typography.titleMedium, color = OnInk)
+            Text(step.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             AnimatedContent(
                 targetState = step.value,
                 transitionSpec = { fadeIn(tween(240)) togetherWith fadeOut(tween(140)) },
@@ -418,7 +430,11 @@ private fun ChainRow(
                 Text(
                     value,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (step.state == StepState.PENDING) OnInkFaint else OnInkMuted
+                    color = if (step.state == StepState.PENDING) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
             }
             AnimatedVisibility(
@@ -429,7 +445,7 @@ private fun ChainRow(
                 Box(Modifier.padding(top = 10.dp)) {
                     PillButton(
                         stringResource(if (restarting) R.string.restarting else R.string.action_restart_systemui),
-                        Negative,
+                        MaterialTheme.colorScheme.error,
                         onRestart
                     )
                 }
@@ -444,15 +460,15 @@ private fun RefreshButton(refresh: RefreshState, onRefresh: () -> Unit) {
     val iconTint by animateColorAsState(
         when (refresh) {
             RefreshState.NO_RESPONSE -> Warning
-            RefreshState.UPDATED -> Accent
-            else -> OnInk
+            RefreshState.UPDATED -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSecondaryContainer
         },
         tween(300),
         label = "refreshTint"
     )
-    GlassIconButton(
-        R.drawable.ic_refresh,
-        onRefresh,
+    ExpressiveIconButton(
+        icon = R.drawable.ic_refresh,
+        onClick = onRefresh,
         description = stringResource(R.string.action_refresh),
         iconTint = iconTint,
         iconModifier = Modifier.graphicsLayer { rotationZ = angle }
@@ -461,14 +477,18 @@ private fun RefreshButton(refresh: RefreshState, onRefresh: () -> Unit) {
 
 @Composable
 private fun DetailTile(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .glass(LocalBackdrop.current, TileShape)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    Card(
+        shape = TileShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = modifier
     ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = OnInkMuted, maxLines = 1)
-        Text(value.ifEmpty { "-" }, style = MaterialTheme.typography.titleSmall, color = OnInk, maxLines = 2)
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(value.ifEmpty { "-" }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
+        }
     }
 }
 
@@ -481,13 +501,21 @@ private fun PillButton(
     spinning: Boolean = false
 ) {
     val animatedTint by animateColorAsState(tint, tween(300), label = "pillTint")
+    val contentTint = onTint(tint)
     val angle by rememberSpin(spinning, SPIN_MS)
-    LiquidButton(onClick, LocalBackdrop.current, tint = animatedTint, height = 38.dp, horizontalPadding = 16.dp) {
+    ExpressiveButton(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = animatedTint,
+            contentColor = contentTint
+        ),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (icon != null) {
                 AppIcon(
                     icon,
-                    tint = onTint(tint),
+                    tint = contentTint,
                     size = 18.dp,
                     modifier = Modifier.graphicsLayer { rotationZ = angle }
                 )
@@ -497,7 +525,7 @@ private fun PillButton(
                 transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(120)) },
                 label = "pillLabel"
             ) { text ->
-                Text(text, style = MaterialTheme.typography.labelLarge, color = onTint(tint), maxLines = 1)
+                Text(text, style = MaterialTheme.typography.labelLarge, color = contentTint, maxLines = 1)
             }
         }
     }
@@ -512,10 +540,10 @@ private fun toneOf(state: StepState): StatusTone = when (state) {
 
 @Composable
 private fun stateColor(state: StepState): Color = when (state) {
-    StepState.OK -> Accent
+    StepState.OK -> MaterialTheme.colorScheme.primary
     StepState.FAILED -> Negative
     StepState.WAITING -> Warning
-    StepState.PENDING -> Color.Gray.copy(alpha = 0.5f)
+    StepState.PENDING -> MaterialTheme.colorScheme.outline
 }
 
 @Composable

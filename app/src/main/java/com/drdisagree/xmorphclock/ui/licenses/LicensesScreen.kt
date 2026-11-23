@@ -8,10 +8,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,21 +32,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.model.License
 import com.drdisagree.xmorphclock.ui.components.AppIcon
-import com.drdisagree.xmorphclock.ui.components.LocalBackdrop
 import com.drdisagree.xmorphclock.ui.components.PageScaffold
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
-import com.drdisagree.xmorphclock.ui.components.glass
-import com.drdisagree.xmorphclock.ui.theme.OnInk
-import com.drdisagree.xmorphclock.ui.theme.OnInkFaint
-import com.drdisagree.xmorphclock.ui.theme.OnInkMuted
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private val CardShape = RoundedCornerShape(24.dp)
@@ -67,28 +63,34 @@ fun LicensesScreen(viewModel: LicensesViewModel, onBack: () -> Unit) {
 private fun LicenseCard(license: License, open: Boolean, onToggle: () -> Unit) {
     val paragraphs = remember(license.text) { paragraphsOf(license.text) }
     val rotation by animateFloatAsState(if (open) 90f else 0f, tween(320, easing = Emphasized), label = "chevron")
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .glass(LocalBackdrop.current, CardShape)
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(interactionSource = null, indication = null, role = Role.Button, onClick = onToggle)
-                .padding(horizontal = 20.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Surface(
+            onClick = onToggle,
+            shape = CardShape,
+            color = Color.Transparent,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(license.name, style = MaterialTheme.typography.titleMedium, color = OnInk)
-                Text(paragraphs.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, color = OnInkMuted, maxLines = 1)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                    Text(license.name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(paragraphs.firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                AppIcon(
+                    R.drawable.ic_chevron,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    size = 16.dp,
+                    modifier = Modifier.graphicsLayer { rotationZ = rotation }
+                )
             }
-            AppIcon(
-                R.drawable.ic_chevron,
-                tint = OnInkFaint,
-                size = 16.dp,
-                modifier = Modifier.graphicsLayer { rotationZ = rotation }
-            )
         }
         AnimatedVisibility(
             visible = open,
@@ -106,7 +108,7 @@ private fun LicenseCard(license: License, open: Boolean, onToggle: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(paragraphs.drop(1)) { paragraph ->
-                    Text(paragraph, style = MaterialTheme.typography.bodySmall, color = OnInkMuted)
+                    Text(paragraph, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
