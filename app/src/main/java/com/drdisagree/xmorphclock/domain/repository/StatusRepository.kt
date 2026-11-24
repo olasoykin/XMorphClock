@@ -9,6 +9,7 @@ interface StatusRepository {
     val framework: Flow<FrameworkInfo?>
     val hookReport: Flow<HookReport?>
     fun requestHookReport()
+    fun refreshFramework()
     fun installedAt(): Long
     suspend fun restartSystemUi(): Boolean
     suspend fun checkRoot(): Boolean

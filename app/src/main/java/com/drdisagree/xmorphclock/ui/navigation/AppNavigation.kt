@@ -3,10 +3,12 @@ package com.drdisagree.xmorphclock.ui.navigation
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
@@ -44,6 +46,7 @@ private val SLIDE_DISTANCE = 30.dp
 @Composable
 fun AppNavigation(container: AppContainer, wallpaper: ImageBitmap?, depth: DepthLayer?, geometry: ClockGeometry, faceData: FaceData, sampleFaceData: FaceData) {
     val backStack = rememberNavBackStack(if (container.isOnboardingDone) HomeRoute else OnboardingRoute)
+    val previewOnly by container.previewOnly.collectAsStateWithLifecycle()
 
     fun reset(route: NavKey) {
         backStack.clear()
@@ -85,13 +88,18 @@ fun AppNavigation(container: AppContainer, wallpaper: ImageBitmap?, depth: Depth
                     HomeScreen(
                         viewModel = viewModel(factory = homeViewModelFactory(container)),
                         editor = viewModel(factory = editorViewModelFactory(container)),
+                        previewOnly = previewOnly,
                         onOpenStatus = { backStack.add(StatusRoute) },
                         onOpenSettings = { backStack.add(SettingsRoute) },
                         onOpenAbout = { backStack.add(AboutRoute) }
                     )
                 }
                 entry<StatusRoute> {
-                    StatusScreen(viewModel(factory = statusViewModelFactory(container)), onBack = { back() })
+                    StatusScreen(
+                        viewModel = viewModel(factory = statusViewModelFactory(container)),
+                        previewOnly = previewOnly,
+                        onBack = { back() }
+                    )
                 }
                 entry<SettingsRoute> {
                     SettingsScreen(

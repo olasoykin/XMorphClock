@@ -595,4 +595,12 @@
     <string name="group_name">Group</string>
     <string name="label_group">Group</string>
     <string name="action_add_items">Add items</string>
+    <string name="module_preview">Preview mode</string>
+    <plurals name="hint_preview_taps_remaining">
+        <item quantity="one">Tap %1$d more time to preview</item>
+        <item quantity="other">Tap %1$d more times to preview</item>
+    </plurals>
+    <string name="preview_mode_title">Preview mode</string>
+    <string name="preview_mode_message">You entered without root or Xposed permissions. You can browse and test all clock faces, editor tools, and settings; no system changes will be applied.</string>
+    <string name="preview_mode_banner">Running in preview mode without permissions. No system changes are applied.</string>
 </resources>

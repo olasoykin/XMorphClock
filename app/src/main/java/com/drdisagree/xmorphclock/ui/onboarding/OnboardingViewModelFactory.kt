@@ -10,9 +10,11 @@ fun onboardingViewModelFactory(container: AppContainer): ViewModelProvider.Facto
         OnboardingViewModel(
             observeFaces = container.observeFaces,
             observeFramework = container.observeFramework,
+            refreshFramework = container.refreshFramework,
             checkRoot = container.checkRoot,
             restartSystemUi = container.restartSystemUi,
-            setOnboardingDone = container.setOnboardingDone
+            setOnboardingDone = container.setOnboardingDone,
+            setPreviewOnly = container::setPreviewOnly
         )
     }
 }

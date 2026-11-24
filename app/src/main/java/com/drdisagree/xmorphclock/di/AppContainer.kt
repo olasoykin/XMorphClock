@@ -81,6 +81,7 @@ import com.drdisagree.xmorphclock.domain.usecase.ObserveWallpaperUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveWeatherUseCase
 import com.drdisagree.xmorphclock.domain.usecase.PruneOwnedFacesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ReadPresetFileUseCase
+import com.drdisagree.xmorphclock.domain.usecase.RefreshFrameworkUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RefreshWeatherUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RemoveFromGroupUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RequestHookReportUseCase
@@ -106,8 +107,19 @@ import com.drdisagree.xmorphclock.domain.usecase.UpdateStylePresetUseCase
 import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.engine.FaceFont
 import com.drdisagree.xmorphclock.engine.FaceImages
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 class AppContainer(context: Context) {
+
+    private val previewOnlyState = MutableStateFlow(false)
+    val previewOnly: StateFlow<Boolean> = previewOnlyState.asStateFlow()
+
+    fun setPreviewOnly(enabled: Boolean) {
+        previewOnlyState.value = enabled
+        XposedServiceSource.setPreviewOnly(enabled)
+    }
 
     private val paletteStore = PaletteStore(context)
 
@@ -151,6 +163,7 @@ class AppContainer(context: Context) {
     val observeSettings = ObserveSettingsUseCase(settingsRepository)
     val observeModuleStatus = ObserveModuleStatusUseCase(statusRepository)
     val observeFramework = ObserveFrameworkUseCase(statusRepository)
+    val refreshFramework = RefreshFrameworkUseCase(statusRepository)
     val observeHookReport = ObserveHookReportUseCase(statusRepository)
     val getInstallTime = GetInstallTimeUseCase(statusRepository)
     val observeWallpaper = ObserveWallpaperUseCase(wallpaperRepository)

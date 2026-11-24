@@ -23,13 +23,20 @@ class StatusRepositoryImpl(
     override val hookReport: Flow<HookReport?> = reports.report
 
     override fun requestHookReport() {
+        service.refresh()
         reports.request()
+    }
+
+    override fun refreshFramework() {
+        service.refresh()
     }
 
     override fun installedAt(): Long = reports.installedAt()
 
-    override suspend fun restartSystemUi(): Boolean =
-        RootShell.run("killall ${ReportContract.SYSTEMUI_PACKAGE}")
+    override suspend fun restartSystemUi(): Boolean {
+        if (service.isPreviewOnly) return false
+        return RootShell.run("killall ${ReportContract.SYSTEMUI_PACKAGE}")
+    }
 
     override suspend fun checkRoot(): Boolean = RootShell.run("id")
 

@@ -36,12 +36,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,6 +57,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -98,6 +102,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
     }
 
     LifecycleResumeEffect(stage) {
+        viewModel.onRefreshFramework()
         if (stage == OnboardingStage.SETUP) viewModel.onCheckRoot()
         onPauseOrDispose { }
     }
@@ -145,10 +150,10 @@ private fun OnboardingOverlay(
         val maxClockHeight = maxHeight * 0.5f
         val height = with(LocalDensity.current) { maxHeight.toPx() }
 
-        fun unlock() {
+        fun unlock(preview: Boolean = false) {
             scope.launch {
                 swipe.animateTo(-height, tween(420, easing = Emphasized))
-                viewModel.onFinish(onFinished)
+                if (preview) viewModel.onFinishPreview(onFinished) else viewModel.onFinish(onFinished)
             }
         }
 
@@ -237,7 +242,12 @@ private fun OnboardingOverlay(
                 }
             }
             Spacer(Modifier.weight(1f))
-            Hint(stage, state.isReady, onUnlock = { unlock() })
+            Hint(
+                stage = stage,
+                ready = state.isReady,
+                onUnlock = { unlock(preview = false) },
+                onUnlockPreview = { unlock(preview = true) }
+            )
         }
     }
 }
@@ -264,7 +274,16 @@ private fun Staggered(visible: Boolean, index: Int, content: @Composable () -> U
 }
 
 @Composable
-private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
+private fun Hint(
+    stage: OnboardingStage,
+    ready: Boolean,
+    onUnlock: () -> Unit,
+    onUnlockPreview: () -> Unit
+) {
+    var bypassTaps by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(ready) {
+        if (ready) bypassTaps = 0
+    }
     val pulse by rememberInfiniteTransition(label = "hint").animateFloat(
         initialValue = 0.65f,
         targetValue = 1f,
@@ -282,10 +301,31 @@ private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
                 .padding(bottom = 24.dp),
             contentAlignment = Alignment.Center
         ) {
+            val buttonColors = if (ready) {
+                ButtonDefaults.filledTonalButtonColors()
+            } else {
+                ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             ExpressiveTonalButton(
-                onClick = onUnlock,
-                enabled = ready,
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
+                onClick = {
+                    if (ready) {
+                        onUnlock()
+                    } else {
+                        val next = bypassTaps + 1
+                        if (next >= PREVIEW_BYPASS_TAPS) {
+                            bypassTaps = 0
+                            onUnlockPreview()
+                        } else {
+                            bypassTaps = next
+                        }
+                    }
+                },
+                colors = buttonColors,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                modifier = Modifier.testTag("onboarding_continue_button")
             ) {
                 AnimatedVisibility(
                     visible = ready,
@@ -299,15 +339,23 @@ private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
                         modifier = Modifier.padding(end = 8.dp)
                     )
                 }
+                val label = when {
+                    ready -> stringResource(R.string.hint_swipe_to_open)
+                    bypassTaps > 0 -> {
+                        val remaining = PREVIEW_BYPASS_TAPS - bypassTaps
+                        pluralStringResource(R.plurals.hint_preview_taps_remaining, remaining, remaining)
+                    }
+                    else -> stringResource(R.string.hint_finish_setup)
+                }
                 AnimatedContent(
-                    targetState = ready,
-                    transitionSpec = { fadeIn(tween(320, delayMillis = 80)) togetherWith fadeOut(tween(160)) },
+                    targetState = label,
+                    transitionSpec = { fadeIn(tween(240, delayMillis = 40)) togetherWith fadeOut(tween(140)) },
                     label = "hintText"
-                ) { isReady ->
+                ) { text ->
                     Text(
-                        stringResource(if (isReady) R.string.hint_swipe_to_open else R.string.hint_finish_setup),
+                        text,
                         style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.graphicsLayer { alpha = if (isReady) pulse else 1f }
+                        modifier = Modifier.graphicsLayer { alpha = if (ready) pulse else 1f }
                     )
                 }
             }
@@ -315,6 +363,7 @@ private fun Hint(stage: OnboardingStage, ready: Boolean, onUnlock: () -> Unit) {
     }
 }
 
+private const val PREVIEW_BYPASS_TAPS = 5
 private const val STAGGER_START_MS = 820
 private const val STAGGER_STEP_MS = 110
 private const val WAKE_MS = 1_400

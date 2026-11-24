@@ -82,7 +82,11 @@ private val RING_STROKE = 6.dp
 private const val RING_GAP = 14f
 
 @Composable
-fun StatusScreen(viewModel: StatusViewModel, onBack: () -> Unit) {
+fun StatusScreen(
+    viewModel: StatusViewModel,
+    previewOnly: Boolean = false,
+    onBack: () -> Unit
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val steps = statusSteps(state)
@@ -107,6 +111,31 @@ fun StatusScreen(viewModel: StatusViewModel, onBack: () -> Unit) {
         onBack,
         actions = { RefreshButton(state.refresh, viewModel::refresh) }
     ) {
+        if (previewOnly) {
+            item(key = "previewBanner") {
+                Card(
+                    shape = CardShape,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            stringResource(R.string.preview_mode_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            stringResource(R.string.preview_mode_banner),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+        }
         item(key = "hero") { Hero(steps, overall) }
         item(key = "chain") { Chain(steps, state.restarting, viewModel::onRestartSystemUi) }
         item(key = "errors") {

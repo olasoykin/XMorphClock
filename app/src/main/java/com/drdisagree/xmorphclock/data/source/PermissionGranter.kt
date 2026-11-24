@@ -10,6 +10,7 @@ class PermissionGranter(private val context: Context) {
         context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
     suspend fun grant(permissions: List<String>) {
+        if (XposedServiceSource.isPreviewOnly) return
         val missing = permissions.filterNot(::granted)
         if (missing.isEmpty()) return
         RootShell.run(missing.joinToString(SEPARATOR) { "pm grant ${context.packageName} $it" })

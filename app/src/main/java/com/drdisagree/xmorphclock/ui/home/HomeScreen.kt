@@ -26,6 +26,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -58,9 +60,6 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
@@ -85,17 +84,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -115,6 +117,7 @@ import com.drdisagree.xmorphclock.ui.components.AppIcon
 import com.drdisagree.xmorphclock.ui.components.ClockFacePreview
 import com.drdisagree.xmorphclock.ui.components.ExpressiveDialog
 import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
+import com.drdisagree.xmorphclock.ui.components.FitText
 import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.components.LocalFaceData
 import com.drdisagree.xmorphclock.ui.components.LocalSampleFaceData
@@ -123,6 +126,7 @@ import com.drdisagree.xmorphclock.ui.components.MarqueeText
 import com.drdisagree.xmorphclock.ui.components.StatusDot
 import com.drdisagree.xmorphclock.ui.components.StatusPill
 import com.drdisagree.xmorphclock.ui.components.StatusTone
+import com.drdisagree.xmorphclock.ui.components.expressivePillShape
 import com.drdisagree.xmorphclock.ui.components.fadingEdges
 import com.drdisagree.xmorphclock.ui.editor.ColorPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.ColorTarget
@@ -166,13 +170,11 @@ private val CHIPS_HEIGHT = 40.dp
 private val CHIPS_GAP = 10.dp
 private const val HEADER_KEY = "header:"
 private const val FACES_EXPANDED_FRACTION = 0.72f
-private val TABS_INSET = 8.dp
 private val THUMB_RADIUS = 16.dp
 private val BLOCK_PADDING = 8.dp
 private val CLOCK_PADDING = 10.dp
 private val THUMB_RING = 2.5.dp
 internal val ThumbInk = Color(0xFF1F2227)
-private val TABS_BOTTOM = 18.dp
 private val BADGE_TOP = 10.dp
 private val BADGE_INSET = 10.dp
 
@@ -180,6 +182,7 @@ private val BADGE_INSET = 10.dp
 fun HomeScreen(
     viewModel: HomeViewModel,
     editor: EditorViewModel,
+    previewOnly: Boolean = false,
     onOpenStatus: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAbout: () -> Unit
@@ -222,6 +225,7 @@ fun HomeScreen(
     var sheetUp by rememberSaveable { mutableStateOf(false) }
     var guides by rememberSaveable { mutableStateOf(true) }
     var liveInfo by rememberSaveable { mutableStateOf(false) }
+    var previewInfo by rememberSaveable(previewOnly) { mutableStateOf(previewOnly) }
     var pickingColor by rememberSaveable { mutableStateOf<ColorTarget?>(null) }
     var colorTarget by rememberSaveable { mutableStateOf(ColorTarget.FILL) }
     var pickingIcon by rememberSaveable { mutableStateOf(false) }
@@ -376,6 +380,7 @@ fun HomeScreen(
                 } else {
                     TopBar(
                         status = state.moduleStatus,
+                        previewOnly = previewOnly,
                         fullscreen = fullscreen,
                         unsaved = styleStatus.changed,
                         menuOpen = menuOpen,
@@ -430,25 +435,32 @@ fun HomeScreen(
                 }
             }
 
-            if (morph < 1f && previewHeight > 0.dp) {
+            if (morph < 1f && full < 1f && previewHeight > 0.dp && previewWidth > 0.dp) {
+                var barSize by remember { mutableStateOf(IntSize.Zero) }
+                val previewCardWidth = previewHeight * previewScale() * aspect
+                val gutter = ((previewWidth - previewCardWidth) / 2f).coerceAtLeast(0.dp)
+                val maxBarWidth = (gutter - MODE_TABS_GAP * 2).coerceIn(MODE_TABS_MIN_WIDTH, MODE_TABS_MAX_WIDTH)
                 PreviewModeTabs(
                     mode = state.previewMode,
                     onModeChange = viewModel::onPreviewModeChange,
-                    height = lerp(MODE_TABS_HEIGHT, MODE_TABS_FULL_HEIGHT, full),
-                    textScale = (((previewHeight * previewScale() * aspect - TABS_INSET * 2).coerceAtMost(TABS_MAX_WIDTH)) / (TABS_DESIGN_WIDTH * LocalDensity.current.fontScale.coerceAtLeast(1f))).coerceIn(MIN_TABS_TEXT, 1f),
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
+                        .align(Alignment.TopStart)
                         .statusBarsPadding()
                         .padding(top = 68.dp)
-                        .layout { measurable, _ ->
-                            val scale = previewScale()
-                            val height = previewHeight.toPx() * scale
-                            val width = (height * aspect - TABS_INSET.toPx() * 2f).roundToInt().coerceIn(0, TABS_MAX_WIDTH.roundToPx())
-                            val placeable = measurable.measure(Constraints.fixedWidth(width))
-                            val y = (height - TABS_BOTTOM.toPx() - placeable.height).roundToInt().coerceAtLeast(0)
-                            layout(placeable.width, y + placeable.height) { placeable.place(0, y) }
+                        .offset {
+                            val scaledHeight = previewHeight.toPx() * previewScale()
+                            val scaledWidth = scaledHeight * aspect
+                            val previewRight = previewWidth.toPx() / 2f + scaledWidth / 2f
+                            val availableGutter = (previewWidth.toPx() - previewRight).coerceAtLeast(0f)
+                            val x = (previewRight + (availableGutter - barSize.width) / 2f)
+                                .roundToInt()
+                                .coerceIn(0, (previewWidth.toPx() - barSize.width - MODE_TABS_GAP.toPx()).roundToInt().coerceAtLeast(0))
+                            val y = (scaledHeight - barSize.height).roundToInt().coerceAtLeast(0)
+                            IntOffset(x, y)
                         }
-                        .graphicsLayer { alpha = reveal * (1f - morph) * (1f - expand) }
+                        .onSizeChanged { barSize = it }
+                        .width(maxBarWidth)
+                        .graphicsLayer { alpha = reveal * (1f - morph) * (1f - expand) * (1f - full) }
                 )
             }
 
@@ -594,6 +606,13 @@ fun HomeScreen(
                 confirmLabel = stringResource(R.string.action_got_it),
                 onDismiss = { liveInfo = false }
             )
+            ExpressiveDialog(
+                visible = previewInfo,
+                title = stringResource(R.string.preview_mode_title),
+                message = stringResource(R.string.preview_mode_message),
+                confirmLabel = stringResource(R.string.action_got_it),
+                onDismiss = { previewInfo = false }
+            )
         }
     }
 }
@@ -650,48 +669,60 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
 private fun PreviewModeTabs(
     mode: PreviewMode,
     onModeChange: (PreviewMode) -> Unit,
-    height: Dp,
-    modifier: Modifier = Modifier,
-    textScale: Float = 1f
+    modifier: Modifier = Modifier
 ) {
-    val base = MaterialTheme.typography.labelMedium
-    val style = base.copy(fontSize = base.fontSize * textScale, lineHeight = base.lineHeight * textScale)
-    val labels = PreviewMode.entries.map { stringResource(it.label) }
-    val measurer = rememberTextMeasurer()
-    val labelPadding = 4.dp * textScale
-    BoxWithConstraints(modifier) {
-        val slot = with(LocalDensity.current) { ((maxWidth - TAB_ROW_PADDING * 2) / labels.size - labelPadding * 2).toPx() }
-        val widest = labels.maxOf { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width }
-        val minFit = (MIN_TAB_LABEL.value / style.fontSize.value).coerceAtMost(1f)
-        val fit = if (widest > slot && widest > 0) (slot / widest).coerceIn(minFit, 1f) else 1f
-        val shared = style.copy(fontSize = style.fontSize * fit, lineHeight = style.lineHeight * fit)
-        SingleChoiceSegmentedButtonRow(
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(height.coerceAtLeast(36.dp))
+                .padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            PreviewMode.entries.forEachIndexed { index, entry ->
-                val selected = entry == mode
-                SegmentedButton(
-                    selected = selected,
+            PreviewMode.entries.forEach { entry ->
+                val isSelected = entry == mode
+                val interaction = remember { MutableInteractionSource() }
+                val shape = expressivePillShape(interaction, restCorner = 20.dp, pressedCorner = 12.dp)
+                val containerColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                    tween(240),
+                    label = "modeContainer"
+                )
+                val contentColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tween(240),
+                    label = "modeContent"
+                )
+                Surface(
                     onClick = { onModeChange(entry) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = PreviewMode.entries.size),
-                    icon = {},
-                    colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        inactiveContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    shape = shape,
+                    color = containerColor,
+                    contentColor = contentColor,
+                    interactionSource = interaction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minWidth = 60.dp, minHeight = 48.dp)
+                        .semantics {
+                            selected = isSelected
+                            role = Role.Tab
+                        }
+                        .testTag("preview_mode_${entry.name.lowercase()}")
                 ) {
-                    Text(
-                        labels[index],
-                        style = shared,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = labelPadding)
-                    )
+                    Box(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        FitText(
+                            text = stringResource(entry.label),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor
+                        )
+                    }
                 }
             }
         }
@@ -733,6 +764,7 @@ private fun EditPreview(state: EditorUiState, editor: EditorViewModel, playToken
 @Composable
 private fun TopBar(
     status: ModuleStatus,
+    previewOnly: Boolean,
     fullscreen: Boolean,
     unsaved: Boolean,
     menuOpen: Boolean,
@@ -756,18 +788,21 @@ private fun TopBar(
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
+        val showPreview = previewOnly && status != ModuleStatus.ACTIVE
         StatusPill(
             text = stringResource(
-                when (status) {
-                    ModuleStatus.ACTIVE -> R.string.module_active
-                    ModuleStatus.ATTENTION -> R.string.module_attention
-                    ModuleStatus.INACTIVE -> R.string.module_inactive
+                when {
+                    showPreview -> R.string.module_preview
+                    status == ModuleStatus.ACTIVE -> R.string.module_active
+                    status == ModuleStatus.ATTENTION -> R.string.module_attention
+                    else -> R.string.module_inactive
                 }
             ),
-            tone = when (status) {
-                ModuleStatus.ACTIVE -> StatusTone.OK
-                ModuleStatus.ATTENTION -> StatusTone.WARNING
-                ModuleStatus.INACTIVE -> StatusTone.ERROR
+            tone = when {
+                showPreview -> StatusTone.WARNING
+                status == ModuleStatus.ACTIVE -> StatusTone.OK
+                status == ModuleStatus.ATTENTION -> StatusTone.WARNING
+                else -> StatusTone.ERROR
             },
             onClick = onOpenStatus
         )
@@ -1109,17 +1144,13 @@ private fun FaceThumb(
 
 private val KEYBOARD_SHEET = 280.dp
 private const val KEYBOARD_MS = 280
-private val MODE_TABS_HEIGHT = 36.dp
-private val MODE_TABS_FULL_HEIGHT = 44.dp
+private val MODE_TABS_GAP = 10.dp
+private val MODE_TABS_MIN_WIDTH = 72.dp
+private val MODE_TABS_MAX_WIDTH = 96.dp
 private val TABS_GAP = 6.dp
 private val TITLE_HEIGHT = 24.dp
 private val KIND_TABS_WIDTH = 164.dp
 private const val ROW_SHIFT = 32
 private const val ROW_MASK = 0xFFFFFFFFL
-private val TABS_MAX_WIDTH = 260.dp
-private val TABS_DESIGN_WIDTH = 136.dp
-private val TAB_ROW_PADDING = 4.dp
-private val MIN_TAB_LABEL = 9.sp
-private const val MIN_TABS_TEXT = 0.6f
 
 private val FONT_TYPES = arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")

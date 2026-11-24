@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.drdisagree.xmorphclock.domain.usecase.CheckRootUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveFacesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveFrameworkUseCase
+import com.drdisagree.xmorphclock.domain.usecase.RefreshFrameworkUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RestartSystemUiUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetOnboardingDoneUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,9 +18,11 @@ import kotlinx.coroutines.launch
 class OnboardingViewModel(
     observeFaces: ObserveFacesUseCase,
     observeFramework: ObserveFrameworkUseCase,
+    private val refreshFramework: RefreshFrameworkUseCase,
     private val checkRoot: CheckRootUseCase,
     private val restartSystemUi: RestartSystemUiUseCase,
-    private val setOnboardingDone: SetOnboardingDoneUseCase
+    private val setOnboardingDone: SetOnboardingDoneUseCase,
+    private val setPreviewOnly: (Boolean) -> Unit = {}
 ) : ViewModel() {
 
     private val root = MutableStateFlow<Boolean?>(null)
@@ -35,6 +38,10 @@ class OnboardingViewModel(
     ) { faces, framework, rootGranted, checking, isRestarting ->
         OnboardingUiState(faces.firstOrNull(), rootGranted, checking, framework, isRestarting)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), OnboardingUiState())
+
+    fun onRefreshFramework() {
+        refreshFramework()
+    }
 
     fun onCheckRoot() {
         if (rootChecking.value || root.value == true) return
@@ -56,9 +63,15 @@ class OnboardingViewModel(
 
     fun onFinish(then: () -> Unit) {
         viewModelScope.launch {
+            setPreviewOnly(false)
             setOnboardingDone(true)
             then()
         }
+    }
+
+    fun onFinishPreview(then: () -> Unit) {
+        setPreviewOnly(true)
+        then()
     }
 }
 
