@@ -10,6 +10,7 @@ import com.drdisagree.xmorphclock.domain.usecase.RequestHookReportUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RestartSystemUiUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SaveReportUseCase
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -84,9 +86,26 @@ class StatusViewModel(
         if (restarting.value) return
         restarting.value = true
         viewModelScope.launch {
+            val restartAt = System.currentTimeMillis()
             if (restartSystemUi()) {
-                delay(RESTART_SETTLE)
-                requestHookReport()
+                delay(RESTART_INITIAL_WAIT)
+                withTimeoutOrNull(RESTART_TIMEOUT) {
+                    coroutineScope {
+                        val poller = launch {
+                            while (isActive) {
+                                requestHookReport()
+                                delay(RESTART_POLL_INTERVAL)
+                            }
+                        }
+                        try {
+                            observeHookReport().first { report ->
+                                report != null && report.isFreshSince(restartAt, getInstallTime(), CLOCK_SLACK)
+                            }
+                        } finally {
+                            poller.cancel()
+                        }
+                    }
+                }
             }
             restarting.value = false
         }
@@ -94,7 +113,9 @@ class StatusViewModel(
 }
 
 private const val STOP_TIMEOUT = 5_000L
-private const val RESTART_SETTLE = 6_000L
+private const val RESTART_INITIAL_WAIT = 2_500L
+private const val RESTART_POLL_INTERVAL = 1_500L
+private const val RESTART_TIMEOUT = 12_000L
 private const val RESPONSE_TIMEOUT = 4_000L
 private const val CLOCK_SLACK = 1_000L
 private const val MIN_CHECKING = 450L

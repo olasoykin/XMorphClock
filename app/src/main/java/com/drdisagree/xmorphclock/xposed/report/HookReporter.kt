@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
+import android.os.UserManager
 import androidx.core.content.ContextCompat
 import com.drdisagree.xmorphclock.BuildConfig
 import com.drdisagree.xmorphclock.data.mapper.HookReportJsonMapper
@@ -33,6 +34,8 @@ object HookReporter {
     private const val MAX_LOGS = 60
     private const val MAX_FRAMES = 4
     private const val FRAME_DEBOUNCE = 400L
+    private const val REGISTER_RETRY_MS = 500L
+    private const val MAX_REGISTER_TRIES = 30
     private const val TIME_PATTERN = "HH:mm:ss.SSS"
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -44,7 +47,11 @@ object HookReporter {
     private val logs = ConcurrentLinkedDeque<String>()
     private val timeFormat = SimpleDateFormat(TIME_PATTERN, Locale.US)
     private val loadedAt = System.currentTimeMillis()
+    @Volatile
     private var registered = false
+    @Volatile
+    private var unlockRegistered = false
+    @Volatile
     private var loadedUpdateTime = 0L
 
     @Volatile
@@ -140,22 +147,56 @@ object HookReporter {
     }
 
     fun start() {
-        mainHandler.post {
-            register()
-            send()
+        mainHandler.post { startInternal(0) }
+    }
+
+    private fun startInternal(tries: Int) {
+        val context = application()
+        if (context == null) {
+            if (tries < MAX_REGISTER_TRIES) {
+                mainHandler.postDelayed({ startInternal(tries + 1) }, REGISTER_RETRY_MS)
+            }
+            return
+        }
+        registerWith(context)
+        send()
+        if (context.getSystemService(UserManager::class.java)?.isUserUnlocked == false) {
+            sendWhenUnlocked(context)
         }
     }
 
-    private fun register() {
+    @Synchronized
+    private fun registerWith(context: Context) {
+        if (loadedUpdateTime == 0L) {
+            loadedUpdateTime = moduleUpdatedAt(context)
+        }
         if (registered) return
-        val context = application() ?: return
-        loadedUpdateTime = moduleUpdatedAt(context)
-        ContextCompat.registerReceiver(context, requestReceiver, IntentFilter(ReportContract.ACTION_REQUEST), ContextCompat.RECEIVER_EXPORTED)
-        registered = true
+        runCatching {
+            ContextCompat.registerReceiver(context, requestReceiver, IntentFilter(ReportContract.ACTION_REQUEST), ContextCompat.RECEIVER_EXPORTED)
+            registered = true
+        }
+    }
+
+    @Synchronized
+    private fun sendWhenUnlocked(context: Context) {
+        if (unlockRegistered) return
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                runCatching { receiverContext.unregisterReceiver(this) }
+                send()
+            }
+        }
+        runCatching {
+            ContextCompat.registerReceiver(context, receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), ContextCompat.RECEIVER_EXPORTED)
+            unlockRegistered = true
+        }
     }
 
     private fun send() {
         val context = application() ?: return
+        if (!registered || loadedUpdateTime == 0L) {
+            registerWith(context)
+        }
         val state = try {
             stateProvider?.invoke().orEmpty()
         } catch (throwable: Throwable) {

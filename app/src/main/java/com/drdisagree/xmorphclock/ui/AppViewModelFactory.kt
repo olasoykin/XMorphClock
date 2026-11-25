@@ -6,5 +6,18 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.drdisagree.xmorphclock.di.AppContainer
 
 fun appViewModelFactory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-    initializer { AppViewModel(container.observeWallpaper, container.observeHookReport, container.observeSettings, container.syncAppliedFace, container.observeFaceData, container.observeSampleFaceData, container.observeDepthSettings, container.observeDepthSubject) }
+    initializer {
+        AppViewModel(
+            observeWallpaper = container.observeWallpaper,
+            observeHookReport = container.observeHookReport,
+            observeFramework = container.observeFramework,
+            requestHookReport = container.requestHookReport,
+            observeSettings = container.observeSettings,
+            syncAppliedFace = container.syncAppliedFace,
+            observeFaceData = container.observeFaceData,
+            observeSampleFaceData = container.observeSampleFaceData,
+            observeDepthSettings = container.observeDepthSettings,
+            observeDepthSubject = container.observeDepthSubject
+        )
+    }
 }

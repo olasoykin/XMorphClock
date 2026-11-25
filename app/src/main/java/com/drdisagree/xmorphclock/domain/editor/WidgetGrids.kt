@@ -154,7 +154,7 @@ object WidgetGrids {
                 val clockSpan = clockBounds?.let { (it.top - zoneGap) to (it.bottom + zoneGap) }
                     ?: (0f to (clockBottomY + zoneGap))
                 val defaultInlineY = if (widgetsAbove) {
-                    gridSpan?.first?.minus(zoneGap + rowH) ?: ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - rowH)
+                    gridSpan?.first?.minus(rowH) ?: ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - rowH)
                 } else {
                     gridSpan?.second ?: (clockBounds?.bottom?.plus(zoneGap) ?: (clockBottomY + zoneGap + cellW + zoneGap))
                 }
@@ -258,28 +258,41 @@ object WidgetGrids {
                 else -> null
             } ?: estimateClockBounds(clockFace, result.clockItem, state)
 
-            val paddedClock = ItemBounds(
-                rawClock.left - GRID_GAP,
-                rawClock.top - GRID_GAP,
-                rawClock.right + GRID_GAP,
-                rawClock.bottom + GRID_GAP
-            )
-            val gridOverlaps = grid.any { item ->
-                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
-                overlaps(b, paddedClock)
-            }
-            val inlineOverlaps = inline.any { item ->
-                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
-                overlaps(b, paddedClock)
-            }
-
-            val needGridLayout = grid.isNotEmpty() && (result.gridDocked || gridOverlaps)
-            val needInlineLayout = inline.isNotEmpty() && (result.inlineDocked || inlineOverlaps)
-            if (!needGridLayout && !needInlineLayout) return@forEach
-
             val (cleared, clockBounds) = ensureClockClearanceForWidgets(result, state, faceOf, rawClock, maxY)
             result = cleared
             val activeClock = clockBounds ?: rawClock
+            val activePaddedClock = ItemBounds(
+                activeClock.left - GRID_GAP,
+                activeClock.top - GRID_GAP,
+                activeClock.right + GRID_GAP,
+                activeClock.bottom + GRID_GAP
+            )
+            val gridOverlaps = grid.any { item ->
+                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                overlaps(b, activePaddedClock)
+            }
+            val inlineOverlapsClock = inline.any { item ->
+                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                overlaps(b, activePaddedClock)
+            }
+            val gridInlineOverlap = grid.any { g ->
+                val gb = widgetBoundsOf(g, state, faceOf) ?: return@any true
+                inline.any { i ->
+                    val ib = widgetBoundsOf(i, state, faceOf) ?: return@any true
+                    val paddedIb = ItemBounds(
+                        ib.left - GRID_GAP * 0.5f,
+                        ib.top - GRID_GAP * 0.5f,
+                        ib.right + GRID_GAP * 0.5f,
+                        ib.bottom + GRID_GAP * 0.5f
+                    )
+                    overlaps(gb, paddedIb)
+                }
+            }
+
+            val needGridLayout = grid.isNotEmpty() && (result.gridDocked || gridOverlaps)
+            val needInlineLayout = inline.isNotEmpty() && (result.inlineDocked || inlineOverlapsClock || gridInlineOverlap)
+            if (!needGridLayout && !needInlineLayout) return@forEach
+
             if (needGridLayout) {
                 result = layoutZone(
                     composition = result,
@@ -431,6 +444,11 @@ object WidgetGrids {
         val inlinePlaceholder: RectF?
     )
 
+    data class PlaceholderBoundsResult(
+        val gridPlaceholder: ItemBounds?,
+        val inlinePlaceholder: ItemBounds?
+    )
+
     fun calculatePlaceholders(
         clockRect: RectF?,
         gridRect: RectF?,
@@ -448,68 +466,315 @@ object WidgetGrids {
         minTouch: Float,
         isAod: Boolean
     ): PlaceholdersResult {
+        val result = calculatePlaceholderBounds(
+            clockBounds = clockRect?.let { ItemBounds(it.left, it.top, it.right, it.bottom) },
+            gridBounds = gridRect?.let { ItemBounds(it.left, it.top, it.right, it.bottom) },
+            inlineBounds = inlineRect?.let { ItemBounds(it.left, it.top, it.right, it.bottom) },
+            widgetsAbove = widgetsAbove,
+            width = width,
+            height = height,
+            unit = unit,
+            frameLeft = frameLeft,
+            edgePadPx = edgePadPx,
+            slotGap = slotGap,
+            safeBottomPx = safeBottomPx,
+            gridSlotH = gridSlotH,
+            inlineSlotH = inlineSlotH,
+            minTouch = minTouch,
+            isAod = isAod
+        )
+        return PlaceholdersResult(
+            gridPlaceholder = result.gridPlaceholder?.let { RectF(it.left, it.top, it.right, it.bottom) },
+            inlinePlaceholder = result.inlinePlaceholder?.let { RectF(it.left, it.top, it.right, it.bottom) }
+        )
+    }
+
+    fun calculatePlaceholderBounds(
+        clockBounds: ItemBounds?,
+        gridBounds: ItemBounds?,
+        inlineBounds: ItemBounds?,
+        widgetsAbove: Boolean,
+        width: Float,
+        height: Float,
+        unit: Float,
+        frameLeft: Float,
+        edgePadPx: Float,
+        slotGap: Float,
+        safeBottomPx: Float,
+        gridSlotH: Float,
+        inlineSlotH: Float,
+        minTouch: Float,
+        isAod: Boolean
+    ): PlaceholderBoundsResult {
         if (isAod || unit <= 0f || height <= 0f) {
-            return PlaceholdersResult(null, null)
+            return PlaceholderBoundsResult(null, null)
         }
 
-        val wGrid = minOf(unit * FaceGrid.width(FaceGrid.ROW_CELLS), (width - edgePadPx * 2f).coerceAtLeast(minTouch))
+        val needGrid = gridBounds == null
+        val needInline = inlineBounds == null
+        if (!needGrid && !needInline) return PlaceholderBoundsResult(null, null)
+
+        val minY = edgePadPx
+        val maxY = safeBottomPx.coerceAtLeast(minY)
+        val maxWidth = (width - edgePadPx * 2f).coerceAtLeast(minTouch)
+
+        val wGrid = minOf(unit * FaceGrid.width(FaceGrid.ROW_CELLS), maxWidth)
         val hGrid = maxOf(unit * FaceGrid.CELL * 0.72f, gridSlotH)
-        val leftGrid = (frameLeft + (unit - wGrid) / 2f).coerceIn(edgePadPx, (width - edgePadPx - wGrid).coerceAtLeast(edgePadPx))
+        val gridCenterX = inlineBounds?.let { (it.left + it.right) / 2f } ?: (frameLeft + unit / 2f)
+        val leftGrid = (gridCenterX - wGrid / 2f).coerceIn(edgePadPx, (width - edgePadPx - wGrid).coerceAtLeast(edgePadPx))
 
-        val wInline = minOf(unit * INLINE_PLACEHOLDER_RATIO, (width - edgePadPx * 2f).coerceAtLeast(minTouch))
+        val wInline = minOf(unit * INLINE_PLACEHOLDER_RATIO, maxWidth)
         val hInline = inlineSlotH
-        val leftInline = (frameLeft + (unit - wInline) / 2f).coerceIn(edgePadPx, (width - edgePadPx - wInline).coerceAtLeast(edgePadPx))
+        val inlineCenterX = gridBounds?.let { (it.left + it.right) / 2f } ?: (frameLeft + unit / 2f)
+        val leftInline = (inlineCenterX - wInline / 2f).coerceIn(edgePadPx, (width - edgePadPx - wInline).coerceAtLeast(edgePadPx))
 
-        val needGrid = gridRect == null
-        val needInline = inlineRect == null
-        if (!needGrid && !needInline) return PlaceholdersResult(null, null)
+        val cTop = clockBounds?.top ?: (height * 0.35f)
+        val cBottom = clockBounds?.bottom ?: (height * 0.45f)
+        val baseObstacles = listOfNotNull(clockBounds, gridBounds, inlineBounds)
 
-        val cTop = clockRect?.top ?: (height * 0.35f)
-        val cBottom = clockRect?.bottom ?: (height * 0.45f)
-        val spaceBelow = safeBottomPx - cBottom - slotGap
+        var gRes: ItemBounds? = null
+        var iRes: ItemBounds? = null
 
-        val placeAbove = widgetsAbove || spaceBelow < (if (needGrid) hGrid + slotGap else 0f) + (if (needInline) hInline + slotGap else 0f)
+        if (needGrid && needInline) {
+            val gridAboveY = cTop - slotGap - hGrid
+            val inlineAboveGridY = gridAboveY - slotGap - hInline
+            val gridBelowY = cBottom + slotGap
+            val inlineBelowGridY = gridBelowY + hGrid + slotGap
 
-        var gRes: RectF? = null
-        var iRes: RectF? = null
-
-        if (placeAbove) {
-            if (needGrid && needInline) {
-                val gTop = (cTop - slotGap - hGrid).coerceIn(edgePadPx + hInline + slotGap, (cTop - slotGap - hGrid).coerceAtLeast(edgePadPx))
-                val iTop = (gTop - slotGap - hInline).coerceAtLeast(edgePadPx)
-                gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
-                iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
-            } else if (needGrid) {
-                val refTop = inlineRect?.top ?: cTop
-                val gTop = (refTop - slotGap - hGrid).coerceAtLeast(edgePadPx)
-                gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
+            val preferredPairs = if (widgetsAbove) {
+                listOf(
+                    gridAboveY to inlineAboveGridY,
+                    gridAboveY to (cBottom + slotGap),
+                    gridBelowY to inlineBelowGridY
+                )
             } else {
-                val refTop = gridRect.top
-                val iTop = (refTop - slotGap - hInline).coerceAtLeast(edgePadPx)
-                iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
+                listOf(
+                    gridBelowY to inlineBelowGridY,
+                    gridBelowY to (cTop - slotGap - hInline),
+                    gridAboveY to inlineAboveGridY
+                )
             }
-        } else {
-            if (needGrid && needInline) {
-                val gTop = (cBottom + slotGap).coerceIn(edgePadPx, safeBottomPx - hGrid - hInline - slotGap)
-                val iTop = gTop + hGrid + slotGap
-                gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
-                iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
-            } else if (needGrid) {
-                val gTop = (cBottom + slotGap).coerceIn(edgePadPx, safeBottomPx - hGrid)
-                gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
-            } else {
-                val canFitBelowGrid = safeBottomPx - gridRect.bottom >= hInline + slotGap
-                val canFitBetweenClockAndGrid = gridRect.top - cBottom >= hInline + slotGap * 2f
-                val iTop = when {
-                    canFitBelowGrid -> gridRect.bottom + slotGap
-                    canFitBetweenClockAndGrid -> cBottom + slotGap
-                    else -> (cTop - slotGap - hInline).coerceAtLeast(edgePadPx)
+
+            var placedPair: Pair<ItemBounds, ItemBounds>? = null
+            for ((gY, iY) in preferredPairs) {
+                val gCand = ItemBounds(leftGrid, gY, leftGrid + wGrid, gY + hGrid)
+                val iCand = ItemBounds(leftInline, iY, leftInline + wInline, iY + hInline)
+                if (isValidPlaceholder(gCand, baseObstacles, minY, maxY, slotGap) &&
+                    isValidPlaceholder(iCand, baseObstacles + gCand, minY, maxY, slotGap)
+                ) {
+                    placedPair = gCand to iCand
+                    break
                 }
-                iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
+            }
+
+            if (placedPair != null) {
+                gRes = placedPair.first
+                iRes = placedPair.second
+            } else {
+                val gridDesiredY = if (widgetsAbove) gridAboveY else gridBelowY
+                val gridCandidates = if (widgetsAbove) listOf(gridAboveY, gridBelowY) else listOf(gridBelowY, gridAboveY)
+                gRes = findPlaceholderBounds(
+                    left = leftGrid,
+                    width = wGrid,
+                    height = hGrid,
+                    preferredCandidates = gridCandidates,
+                    preferredY = gridDesiredY,
+                    obstacles = baseObstacles,
+                    minY = minY,
+                    maxY = maxY,
+                    slotGap = slotGap
+                )
+                val obstaclesWithGrid = if (gRes != null) baseObstacles + gRes else baseObstacles
+                val gTopEff = gRes?.top ?: cTop
+                val gBottomEff = gRes?.bottom ?: cBottom
+                val inlineDesiredY = if (widgetsAbove) gTopEff - slotGap - hInline else gBottomEff + slotGap
+                val inlineCandidates = if (widgetsAbove) {
+                    listOf(gTopEff - slotGap - hInline, gBottomEff + slotGap, cBottom + slotGap, cTop - slotGap - hInline)
+                } else {
+                    listOf(gBottomEff + slotGap, gTopEff - slotGap - hInline, cTop - slotGap - hInline, cBottom + slotGap)
+                }
+                iRes = findPlaceholderBounds(
+                    left = leftInline,
+                    width = wInline,
+                    height = hInline,
+                    preferredCandidates = inlineCandidates,
+                    preferredY = inlineDesiredY,
+                    obstacles = obstaclesWithGrid,
+                    minY = minY,
+                    maxY = maxY,
+                    slotGap = slotGap
+                )
+            }
+        } else if (needGrid) {
+            val refInline = requireNotNull(inlineBounds)
+            val gridIsAboveClock = if (clockBounds != null) {
+                (refInline.top + refInline.bottom) / 2f < (clockBounds.top + clockBounds.bottom) / 2f
+            } else {
+                widgetsAbove
+            }
+            val preferredCandidates = if (gridIsAboveClock) {
+                listOf(
+                    refInline.bottom + slotGap,
+                    cTop - slotGap - hGrid,
+                    refInline.top - slotGap - hGrid,
+                    cBottom + slotGap
+                )
+            } else {
+                listOf(
+                    refInline.top - slotGap - hGrid,
+                    cBottom + slotGap,
+                    refInline.bottom + slotGap,
+                    cTop - slotGap - hGrid
+                )
+            }
+            val preferredY = preferredCandidates.first()
+            gRes = findPlaceholderBounds(
+                left = leftGrid,
+                width = wGrid,
+                height = hGrid,
+                preferredCandidates = preferredCandidates,
+                preferredY = preferredY,
+                obstacles = baseObstacles,
+                minY = minY,
+                maxY = maxY,
+                slotGap = slotGap
+            )
+        } else {
+            val refGrid = requireNotNull(gridBounds)
+            val gridIsAboveClock = if (clockBounds != null) {
+                (refGrid.top + refGrid.bottom) / 2f < (clockBounds.top + clockBounds.bottom) / 2f
+            } else {
+                widgetsAbove
+            }
+            val preferredCandidates = if (gridIsAboveClock) {
+                listOf(
+                    refGrid.top - slotGap - hInline,
+                    refGrid.bottom + slotGap,
+                    cBottom + slotGap,
+                    cTop - slotGap - hInline
+                )
+            } else {
+                listOf(
+                    refGrid.bottom + slotGap,
+                    refGrid.top - slotGap - hInline,
+                    cTop - slotGap - hInline,
+                    cBottom + slotGap
+                )
+            }
+            val preferredY = preferredCandidates.first()
+            iRes = findPlaceholderBounds(
+                left = leftInline,
+                width = wInline,
+                height = hInline,
+                preferredCandidates = preferredCandidates,
+                preferredY = preferredY,
+                obstacles = baseObstacles,
+                minY = minY,
+                maxY = maxY,
+                slotGap = slotGap
+            )
+        }
+
+        return PlaceholderBoundsResult(gRes, iRes)
+    }
+
+    private fun findPlaceholderBounds(
+        left: Float,
+        width: Float,
+        height: Float,
+        preferredCandidates: List<Float>,
+        preferredY: Float,
+        obstacles: List<ItemBounds>,
+        minY: Float,
+        maxY: Float,
+        slotGap: Float
+    ): ItemBounds? {
+        if (maxY - minY < height - 0.5f) return null
+
+        for (y in preferredCandidates) {
+            val cand = ItemBounds(left, y, left + width, y + height)
+            if (isValidPlaceholder(cand, obstacles, minY, maxY, slotGap)) {
+                return cand
             }
         }
 
-        return PlaceholdersResult(gRes, iRes)
+        val gaps = listOf(slotGap, (slotGap * 0.4f).coerceAtLeast(2f), 0f).distinct()
+        for (g in gaps) {
+            val fitting = freeVerticalIntervalsForBounds(
+                left = left,
+                right = left + width,
+                minY = minY,
+                maxY = maxY,
+                obstacles = obstacles,
+                gap = g
+            ).filter { (s, e) -> e - s >= height - 0.5f }
+
+            if (fitting.isNotEmpty()) {
+                val bestInterval = fitting.minBy { (s, e) ->
+                    val maxAllowed = (e - height).coerceAtLeast(s)
+                    val clamped = preferredY.coerceIn(s, maxAllowed)
+                    abs(clamped - preferredY)
+                }
+                val maxAllowed = (bestInterval.second - height).coerceAtLeast(bestInterval.first)
+                val y = preferredY.coerceIn(bestInterval.first, maxAllowed)
+                return ItemBounds(left, y, left + width, y + height)
+            }
+        }
+        return null
+    }
+
+    private fun isValidPlaceholder(
+        cand: ItemBounds,
+        obstacles: List<ItemBounds>,
+        minY: Float,
+        maxY: Float,
+        gap: Float
+    ): Boolean {
+        if (cand.top < minY - 0.5f || cand.bottom > maxY + 0.5f) return false
+        return obstacles.none { obs ->
+            cand.left < obs.right + gap - 0.5f &&
+                cand.right > obs.left - gap + 0.5f &&
+                cand.top < obs.bottom + gap - 0.5f &&
+                cand.bottom > obs.top - gap + 0.5f
+        }
+    }
+
+    private fun freeVerticalIntervalsForBounds(
+        left: Float,
+        right: Float,
+        minY: Float,
+        maxY: Float,
+        obstacles: List<ItemBounds>,
+        gap: Float
+    ): List<Pair<Float, Float>> {
+        val merged = obstacles
+            .filter { obs -> left < obs.right + gap - 0.5f && right > obs.left - gap + 0.5f }
+            .map { obs -> (obs.top - gap) to (obs.bottom + gap) }
+            .filter { it.second > it.first }
+            .sortedBy { it.first }
+            .fold(mutableListOf<Pair<Float, Float>>()) { acc, interval ->
+                val last = acc.lastOrNull()
+                if (last == null || interval.first > last.second) {
+                    acc.add(interval)
+                } else {
+                    acc[acc.lastIndex] = last.first to maxOf(last.second, interval.second)
+                }
+                acc
+            }
+
+        val free = mutableListOf<Pair<Float, Float>>()
+        var cursor = minY
+        for ((start, end) in merged) {
+            if (start > cursor) {
+                free += cursor to minOf(start, maxY)
+            }
+            cursor = maxOf(cursor, end)
+            if (cursor >= maxY) break
+        }
+        if (cursor < maxY) {
+            free += cursor to maxY
+        }
+        return free
     }
 
     data class StickyDragResult(
@@ -538,139 +803,18 @@ object WidgetGrids {
             return StickyDragResult(lastValidDeltas, gridDocked, inlineDocked, false)
         }
 
-        var nextGridDocked = gridDocked
-        var nextInlineDocked = inlineDocked
-        var attachedEvent = false
-
-        val activeStart = startBounds.getValue(activeTarget)
         val activeLast = lastValidDeltas[activeTarget] ?: (0f to 0f)
-
-        if (activeTarget == LockTarget.CLOCK) {
-            val candidateClock = shifted(activeStart, rawDx, rawDy)
-            val paddedClock = ItemBounds(
-                candidateClock.left - gap - 0.02f,
-                candidateClock.top - gap - 0.02f,
-                candidateClock.right + gap + 0.02f,
-                candidateClock.bottom + gap + 0.02f
-            )
-
-            if (!nextGridDocked && LockTarget.WIDGET_GRID in startBounds) {
-                val gridCurrent = shifted(
-                    startBounds.getValue(LockTarget.WIDGET_GRID),
-                    lastValidDeltas[LockTarget.WIDGET_GRID]?.first ?: 0f,
-                    lastValidDeltas[LockTarget.WIDGET_GRID]?.second ?: 0f
-                )
-                if (overlaps(paddedClock, gridCurrent)) {
-                    nextGridDocked = true
-                    attachedEvent = true
-                }
-            }
-
-            if (!nextInlineDocked && LockTarget.INLINE_GRID in startBounds) {
-                val inlineCurrent = shifted(
-                    startBounds.getValue(LockTarget.INLINE_GRID),
-                    lastValidDeltas[LockTarget.INLINE_GRID]?.first ?: 0f,
-                    lastValidDeltas[LockTarget.INLINE_GRID]?.second ?: 0f
-                )
-                if (overlaps(paddedClock, inlineCurrent)) {
-                    nextInlineDocked = true
-                    attachedEvent = true
-                }
-            }
-
-            val dockedGroup = mutableSetOf(LockTarget.CLOCK)
-            if (nextGridDocked && LockTarget.WIDGET_GRID in startBounds) dockedGroup += LockTarget.WIDGET_GRID
-            if (nextInlineDocked && LockTarget.INLINE_GRID in startBounds) dockedGroup += LockTarget.INLINE_GRID
-
-            val clusterBoxes = dockedGroup.map { target ->
-                val targetLast = lastValidDeltas[target] ?: (0f to 0f)
-                shifted(
-                    startBounds.getValue(target),
-                    targetLast.first - activeLast.first,
-                    targetLast.second - activeLast.second
-                )
-            }
-            val clusterLeft = clusterBoxes.minOf { it.left }
-            val clusterTop = clusterBoxes.minOf { it.top }
-            val clusterRight = clusterBoxes.maxOf { it.right }
-            val clusterBottom = clusterBoxes.maxOf { it.bottom }
-            val clusterBounds = ItemBounds(clusterLeft, clusterTop, clusterRight, clusterBottom)
-
-            val (clampedDx, clampedDy) = clampNonOverlappingDelta(
-                startBounds = clusterBounds,
-                rawDx = rawDx,
-                rawDy = rawDy,
-                lastValidDelta = activeLast,
-                minX = minX,
-                maxX = maxX,
-                minY = minY,
-                maxY = maxY,
-                obstacles = fixedObstacles,
-                gap = gap
-            )
-
-            val stepDx = clampedDx - activeLast.first
-            val stepDy = clampedDy - activeLast.second
-            val newDeltas = HashMap(lastValidDeltas)
-            dockedGroup.forEach { target ->
-                val targetLast = lastValidDeltas[target] ?: (0f to 0f)
-                newDeltas[target] = (targetLast.first + stepDx) to (targetLast.second + stepDy)
-            }
-
-            val undockedTargets = startBounds.keys - dockedGroup
-            if (undockedTargets.isNotEmpty()) {
-                val pushResult = solvePushLayout(
-                    activeTarget = LockTarget.CLOCK,
-                    startBounds = startBounds,
-                    rawDx = clampedDx,
-                    rawDy = clampedDy,
-                    lastValidDeltas = newDeltas,
-                    minX = minX,
-                    maxX = maxX,
-                    minY = minY,
-                    maxY = maxY,
-                    fixedObstacles = fixedObstacles,
-                    gap = gap
-                )
-                return StickyDragResult(pushResult, nextGridDocked, nextInlineDocked, attachedEvent)
-            }
-
-            return StickyDragResult(newDeltas, nextGridDocked, nextInlineDocked, attachedEvent)
-        } else {
-            val wasDocked = when (activeTarget) {
-                LockTarget.WIDGET_GRID -> gridDocked
-                LockTarget.INLINE_GRID -> inlineDocked
-                else -> false
-            }
-            if (activeTarget == LockTarget.WIDGET_GRID) nextGridDocked = false
-            if (activeTarget == LockTarget.INLINE_GRID) nextInlineDocked = false
-
-            if (LockTarget.CLOCK in startBounds) {
-                val candidateWidget = shifted(activeStart, rawDx, rawDy)
-                val paddedWidget = ItemBounds(
-                    candidateWidget.left - gap - 0.02f,
-                    candidateWidget.top - gap - 0.02f,
-                    candidateWidget.right + gap + 0.02f,
-                    candidateWidget.bottom + gap + 0.02f
-                )
-                val clockCurrent = shifted(
-                    startBounds.getValue(LockTarget.CLOCK),
-                    lastValidDeltas[LockTarget.CLOCK]?.first ?: 0f,
-                    lastValidDeltas[LockTarget.CLOCK]?.second ?: 0f
-                )
-                if (overlaps(paddedWidget, clockCurrent)) {
-                    if (activeTarget == LockTarget.WIDGET_GRID) nextGridDocked = true
-                    if (activeTarget == LockTarget.INLINE_GRID) nextInlineDocked = true
-                    attachedEvent = !wasDocked
-                }
-            }
-
-            val solved = solvePushLayout(
+        val dist = hypot(rawDx - activeLast.first, rawDy - activeLast.second)
+        val substeps = ceil(dist / PUSH_SUBSTEP).toInt().coerceIn(1, 32)
+        if (substeps == 1) {
+            return solveSingleStepStickyDrag(
                 activeTarget = activeTarget,
                 startBounds = startBounds,
                 rawDx = rawDx,
                 rawDy = rawDy,
                 lastValidDeltas = lastValidDeltas,
+                gridDocked = gridDocked,
+                inlineDocked = inlineDocked,
                 minX = minX,
                 maxX = maxX,
                 minY = minY,
@@ -678,9 +822,247 @@ object WidgetGrids {
                 fixedObstacles = fixedObstacles,
                 gap = gap
             )
-            return StickyDragResult(solved, nextGridDocked, nextInlineDocked, attachedEvent)
         }
+
+        var currentDeltas = lastValidDeltas
+        var currentGridDocked = gridDocked
+        var currentInlineDocked = inlineDocked
+        var anyAttached = false
+
+        for (step in 1..substeps) {
+            val fraction = step.toFloat() / substeps.toFloat()
+            val stepDx = activeLast.first + (rawDx - activeLast.first) * fraction
+            val stepDy = activeLast.second + (rawDy - activeLast.second) * fraction
+            val res = solveSingleStepStickyDrag(
+                activeTarget = activeTarget,
+                startBounds = startBounds,
+                rawDx = stepDx,
+                rawDy = stepDy,
+                lastValidDeltas = currentDeltas,
+                gridDocked = currentGridDocked,
+                inlineDocked = currentInlineDocked,
+                minX = minX,
+                maxX = maxX,
+                minY = minY,
+                maxY = maxY,
+                fixedObstacles = fixedObstacles,
+                gap = gap
+            )
+            currentDeltas = res.deltas
+            currentGridDocked = res.gridDocked
+            currentInlineDocked = res.inlineDocked
+            if (res.attachedEvent) anyAttached = true
+        }
+
+        return StickyDragResult(
+            deltas = currentDeltas,
+            gridDocked = currentGridDocked,
+            inlineDocked = currentInlineDocked,
+            attachedEvent = anyAttached
+        )
     }
+
+    private fun solveSingleStepStickyDrag(
+        activeTarget: LockTarget,
+        startBounds: Map<LockTarget, ItemBounds>,
+        rawDx: Float,
+        rawDy: Float,
+        lastValidDeltas: Map<LockTarget, Pair<Float, Float>>,
+        gridDocked: Boolean,
+        inlineDocked: Boolean,
+        minX: Float,
+        maxX: Float,
+        minY: Float,
+        maxY: Float,
+        fixedObstacles: List<ItemBounds>,
+        gap: Float
+    ): StickyDragResult {
+        var nextGridDocked = gridDocked
+        var nextInlineDocked = inlineDocked
+        var attachedEvent = false
+
+        val activeStart = startBounds.getValue(activeTarget)
+        val dockMargin = gap + 0.02f
+        val existingDockMargin = maxOf(dockMargin, GRID_GAP + 0.04f)
+
+        fun liveBox(target: LockTarget): ItemBounds? {
+            val base = startBounds[target] ?: return null
+            val delta = lastValidDeltas[target] ?: (0f to 0f)
+            return shifted(base, delta.first, delta.second)
+        }
+
+        fun areAdjacent(a: ItemBounds, b: ItemBounds, margin: Float): Boolean =
+            overlaps(padded(a, margin), b)
+
+        fun gapDistSq(a: ItemBounds, b: ItemBounds): Float {
+            val dx = maxOf(0f, maxOf(a.left - b.right, b.left - a.right))
+            val dy = maxOf(0f, maxOf(a.top - b.bottom, b.top - a.bottom))
+            return dx * dx + dy * dy
+        }
+
+        fun shouldAttach(prevA: ItemBounds?, candA: ItemBounds, targetB: ItemBounds?): Boolean {
+            if (targetB == null) return false
+            if (!overlaps(padded(candA, dockMargin), targetB)) return false
+            if (prevA == null || !areAdjacent(prevA, targetB, dockMargin)) return true
+            return gapDistSq(candA, targetB) < gapDistSq(prevA, targetB) - 1e-6f
+        }
+
+        val clockCur = liveBox(LockTarget.CLOCK)
+        val gridCur = liveBox(LockTarget.WIDGET_GRID)
+        val inlineCur = liveBox(LockTarget.INLINE_GRID)
+
+        val rigidGroup = HashSet<LockTarget>(3).apply { add(activeTarget) }
+
+        when (activeTarget) {
+            LockTarget.CLOCK -> {
+                val candidateClock = shifted(activeStart, rawDx, rawDy)
+                val paddedCandidateClock = padded(candidateClock, dockMargin)
+
+                if (!nextGridDocked && shouldAttach(clockCur, candidateClock, gridCur)) {
+                    nextGridDocked = true
+                    attachedEvent = true
+                }
+                if (nextGridDocked && gridCur != null &&
+                    (clockCur == null || areAdjacent(clockCur, gridCur, existingDockMargin) || overlaps(paddedCandidateClock, gridCur))
+                ) {
+                    rigidGroup += LockTarget.WIDGET_GRID
+                }
+
+                val clockTouchesInline = shouldAttach(clockCur, candidateClock, inlineCur)
+                val gridTouchesInline = gridCur != null && inlineCur != null && areAdjacent(gridCur, inlineCur, dockMargin)
+                if (!nextInlineDocked && inlineCur != null && (clockTouchesInline || (LockTarget.WIDGET_GRID in rigidGroup && gridTouchesInline))) {
+                    nextInlineDocked = true
+                    attachedEvent = true
+                }
+
+                if (nextInlineDocked && inlineCur != null) {
+                    val adjacentToClock = clockCur != null && areAdjacent(clockCur, inlineCur, existingDockMargin)
+                    val adjacentToGrid = gridCur != null && areAdjacent(gridCur, inlineCur, existingDockMargin)
+                    val inlineFollowsClock = when {
+                        gridCur == null -> adjacentToClock || overlaps(paddedCandidateClock, inlineCur)
+                        LockTarget.WIDGET_GRID in rigidGroup -> adjacentToClock || adjacentToGrid
+                        else -> adjacentToClock && !adjacentToGrid
+                    }
+                    if (inlineFollowsClock) {
+                        rigidGroup += LockTarget.INLINE_GRID
+                    }
+                }
+            }
+
+            LockTarget.WIDGET_GRID -> {
+                val candidateGrid = shifted(activeStart, rawDx, rawDy)
+                val paddedCandidateGrid = padded(candidateGrid, dockMargin)
+
+                val inlineAttachedToGrid = nextInlineDocked && inlineCur != null && gridCur != null &&
+                    areAdjacent(gridCur, inlineCur, existingDockMargin)
+                if (inlineAttachedToGrid) {
+                    rigidGroup += LockTarget.INLINE_GRID
+                }
+
+                if (!nextInlineDocked && shouldAttach(gridCur, candidateGrid, inlineCur)) {
+                    nextInlineDocked = true
+                    attachedEvent = true
+                }
+
+                nextGridDocked = if (clockCur != null && overlaps(paddedCandidateGrid, clockCur)) {
+                    if (!gridDocked) attachedEvent = true
+                    true
+                } else {
+                    false
+                }
+            }
+
+            LockTarget.INLINE_GRID -> {
+                val candidateInline = shifted(activeStart, rawDx, rawDy)
+                val paddedCandidateInline = padded(candidateInline, dockMargin)
+
+                val touchesGrid = gridCur != null && overlaps(paddedCandidateInline, gridCur)
+                val touchesClock = clockCur != null && overlaps(paddedCandidateInline, clockCur)
+                nextInlineDocked = touchesGrid || touchesClock
+                if (nextInlineDocked && !inlineDocked) {
+                    attachedEvent = true
+                }
+            }
+
+            LockTarget.SHORTCUTS -> Unit
+        }
+
+        val solved = solvePushLayout(
+            activeTarget = activeTarget,
+            startBounds = startBounds,
+            rawDx = rawDx,
+            rawDy = rawDy,
+            lastValidDeltas = lastValidDeltas,
+            minX = minX,
+            maxX = maxX,
+            minY = minY,
+            maxY = maxY,
+            fixedObstacles = fixedObstacles,
+            gap = gap,
+            rigidGroup = rigidGroup
+        )
+
+        // Post-step contact check so pushing/touching an undocked neighbor also docks cleanly once touching
+        fun solvedBox(target: LockTarget): ItemBounds? {
+            val base = startBounds[target] ?: return null
+            val delta = solved[target] ?: (0f to 0f)
+            return shifted(base, delta.first, delta.second)
+        }
+
+        val finalClock = solvedBox(LockTarget.CLOCK)
+        val finalGrid = solvedBox(LockTarget.WIDGET_GRID)
+        val finalInline = solvedBox(LockTarget.INLINE_GRID)
+
+        when (activeTarget) {
+            LockTarget.CLOCK -> {
+                if (!nextGridDocked && finalClock != null && finalGrid != null && shouldAttach(clockCur, finalClock, finalGrid)) {
+                    nextGridDocked = true
+                    attachedEvent = true
+                }
+                if (!nextInlineDocked && finalInline != null && (
+                        (finalClock != null && shouldAttach(clockCur, finalClock, finalInline)) ||
+                            (nextGridDocked && finalGrid != null && areAdjacent(finalGrid, finalInline, dockMargin))
+                        )
+                ) {
+                    nextInlineDocked = true
+                    attachedEvent = true
+                }
+            }
+
+            LockTarget.WIDGET_GRID -> {
+                if (!nextGridDocked && finalClock != null && finalGrid != null && shouldAttach(gridCur, finalGrid, finalClock)) {
+                    nextGridDocked = true
+                    attachedEvent = true
+                }
+                if (!nextInlineDocked && finalGrid != null && finalInline != null && shouldAttach(gridCur, finalGrid, finalInline)) {
+                    nextInlineDocked = true
+                    attachedEvent = true
+                }
+            }
+
+            LockTarget.INLINE_GRID -> {
+                if (!nextInlineDocked && finalInline != null && (
+                        (finalGrid != null && shouldAttach(inlineCur, finalInline, finalGrid)) ||
+                            (finalClock != null && shouldAttach(inlineCur, finalInline, finalClock))
+                        )
+                ) {
+                    nextInlineDocked = true
+                    attachedEvent = true
+                }
+            }
+
+            LockTarget.SHORTCUTS -> Unit
+        }
+
+        return StickyDragResult(solved, nextGridDocked, nextInlineDocked, attachedEvent)
+    }
+
+    private fun padded(bounds: ItemBounds, amount: Float): ItemBounds = ItemBounds(
+        bounds.left - amount,
+        bounds.top - amount,
+        bounds.right + amount,
+        bounds.bottom + amount
+    )
 
     fun applyMovedItems(
         composition: Composition,
@@ -831,7 +1213,8 @@ object WidgetGrids {
         minY: Float,
         maxY: Float,
         fixedObstacles: List<ItemBounds>,
-        gap: Float = ZONE_GAP
+        gap: Float = ZONE_GAP,
+        rigidGroup: Set<K> = setOf(activeTarget)
     ): Map<K, Pair<Float, Float>> {
         if (activeTarget !in startBounds) return lastValidDeltas
         val activeLast = lastValidDeltas[activeTarget] ?: (0f to 0f)
@@ -849,7 +1232,8 @@ object WidgetGrids {
                 minY = minY,
                 maxY = maxY,
                 fixedObstacles = fixedObstacles,
-                gap = gap
+                gap = gap,
+                rigidGroup = rigidGroup
             )
         }
         var current = lastValidDeltas
@@ -868,7 +1252,8 @@ object WidgetGrids {
                 minY = minY,
                 maxY = maxY,
                 fixedObstacles = fixedObstacles,
-                gap = gap
+                gap = gap,
+                rigidGroup = rigidGroup
             )
         }
         return current
@@ -885,7 +1270,8 @@ object WidgetGrids {
         minY: Float,
         maxY: Float,
         fixedObstacles: List<ItemBounds>,
-        gap: Float
+        gap: Float,
+        rigidGroup: Set<K>
     ): Map<K, Pair<Float, Float>> {
         val activeLast = lastValidDeltas[activeTarget] ?: (0f to 0f)
 
@@ -900,7 +1286,8 @@ object WidgetGrids {
             minY = minY,
             maxY = maxY,
             fixedObstacles = fixedObstacles,
-            gap = gap
+            gap = gap,
+            rigidGroup = rigidGroup
         )?.let { return it }
 
         var lo = 0f
@@ -916,7 +1303,8 @@ object WidgetGrids {
             minY = minY,
             maxY = maxY,
             fixedObstacles = fixedObstacles,
-            gap = gap
+            gap = gap,
+            rigidGroup = rigidGroup
         ) ?: startBounds.keys.associateWith { lastValidDeltas[it] ?: (0f to 0f) }
 
         repeat(14) {
@@ -934,7 +1322,8 @@ object WidgetGrids {
                 minY = minY,
                 maxY = maxY,
                 fixedObstacles = fixedObstacles,
-                gap = gap
+                gap = gap,
+                rigidGroup = rigidGroup
             )
             if (res != null) {
                 best = res
@@ -950,7 +1339,7 @@ object WidgetGrids {
             var xLo = settled.first
             var xHi = rawDx
             var xBest = best
-            tryPushLayout(
+            val fullX = tryPushLayout(
                 activeTarget = activeTarget,
                 startBounds = startBounds,
                 candidateActiveDx = rawDx,
@@ -961,35 +1350,41 @@ object WidgetGrids {
                 minY = minY,
                 maxY = maxY,
                 fixedObstacles = fixedObstacles,
-                gap = gap
-            )?.let { return it }
-            repeat(10) {
-                val midX = (xLo + xHi) * 0.5f
-                val res = tryPushLayout(
-                    activeTarget = activeTarget,
-                    startBounds = startBounds,
-                    candidateActiveDx = midX,
-                    candidateActiveDy = settled.second,
-                    lastValidDeltas = best,
-                    minX = minX,
-                    maxX = maxX,
-                    minY = minY,
-                    maxY = maxY,
-                    fixedObstacles = fixedObstacles,
-                    gap = gap
-                )
-                if (res != null) {
-                    xBest = res
-                    xLo = midX
-                } else {
-                    xHi = midX
+                gap = gap,
+                rigidGroup = rigidGroup
+            )
+            if (fullX != null) {
+                best = fullX
+            } else {
+                repeat(10) {
+                    val midX = (xLo + xHi) * 0.5f
+                    val res = tryPushLayout(
+                        activeTarget = activeTarget,
+                        startBounds = startBounds,
+                        candidateActiveDx = midX,
+                        candidateActiveDy = settled.second,
+                        lastValidDeltas = best,
+                        minX = minX,
+                        maxX = maxX,
+                        minY = minY,
+                        maxY = maxY,
+                        fixedObstacles = fixedObstacles,
+                        gap = gap,
+                        rigidGroup = rigidGroup
+                    )
+                    if (res != null) {
+                        xBest = res
+                        xLo = midX
+                    } else {
+                        xHi = midX
+                    }
                 }
+                best = xBest
             }
-            best = xBest
         }
         val settledAfterX = best[activeTarget] ?: settled
         if (abs(rawDy - settledAfterX.second) > EPS) {
-            tryPushLayout(
+            val fullY = tryPushLayout(
                 activeTarget = activeTarget,
                 startBounds = startBounds,
                 candidateActiveDx = settledAfterX.first,
@@ -1000,8 +1395,40 @@ object WidgetGrids {
                 minY = minY,
                 maxY = maxY,
                 fixedObstacles = fixedObstacles,
-                gap = gap
-            )?.let { return it }
+                gap = gap,
+                rigidGroup = rigidGroup
+            )
+            if (fullY != null) {
+                best = fullY
+            } else {
+                var yLo = settledAfterX.second
+                var yHi = rawDy
+                var yBest = best
+                repeat(10) {
+                    val midY = (yLo + yHi) * 0.5f
+                    val res = tryPushLayout(
+                        activeTarget = activeTarget,
+                        startBounds = startBounds,
+                        candidateActiveDx = settledAfterX.first,
+                        candidateActiveDy = midY,
+                        lastValidDeltas = best,
+                        minX = minX,
+                        maxX = maxX,
+                        minY = minY,
+                        maxY = maxY,
+                        fixedObstacles = fixedObstacles,
+                        gap = gap,
+                        rigidGroup = rigidGroup
+                    )
+                    if (res != null) {
+                        yBest = res
+                        yLo = midY
+                    } else {
+                        yHi = midY
+                    }
+                }
+                best = yBest
+            }
         }
         return best
     }
@@ -1017,29 +1444,43 @@ object WidgetGrids {
         minY: Float,
         maxY: Float,
         fixedObstacles: List<ItemBounds>,
-        gap: Float
+        gap: Float,
+        rigidGroup: Set<K>
     ): Map<K, Pair<Float, Float>>? {
         val activeStart = startBounds[activeTarget] ?: return null
         val activeLast = lastValidDeltas[activeTarget] ?: (0f to 0f)
-        val activeDelta = clampNonOverlappingDelta(
-            startBounds = activeStart,
-            rawDx = candidateActiveDx,
-            rawDy = candidateActiveDy,
-            lastValidDelta = activeLast,
-            minX = minX,
-            maxX = maxX,
-            minY = minY,
-            maxY = maxY,
-            obstacles = fixedObstacles,
-            gap = gap
-        )
+        val effectiveRigid = rigidGroup.filter { it in startBounds }.toSet()
+
+        val activeDelta = if (effectiveRigid.size <= 1) {
+            clampNonOverlappingDelta(
+                startBounds = activeStart,
+                rawDx = candidateActiveDx,
+                rawDy = candidateActiveDy,
+                lastValidDelta = activeLast,
+                minX = minX,
+                maxX = maxX,
+                minY = minY,
+                maxY = maxY,
+                obstacles = fixedObstacles,
+                gap = gap
+            )
+        } else {
+            candidateActiveDx to candidateActiveDy
+        }
+
+        val stepDx = activeDelta.first - activeLast.first
+        val stepDy = activeDelta.second - activeLast.second
 
         val deltas = HashMap<K, Pair<Float, Float>>(startBounds.size)
         val prevBoxes = HashMap<K, ItemBounds>(startBounds.size)
         startBounds.forEach { (k, bounds) ->
             val prevDelta = lastValidDeltas[k] ?: (0f to 0f)
             prevBoxes[k] = shifted(bounds, prevDelta.first, prevDelta.second)
-            deltas[k] = if (k == activeTarget) activeDelta else prevDelta
+            deltas[k] = if (k in effectiveRigid) {
+                (prevDelta.first + stepDx) to (prevDelta.second + stepDy)
+            } else {
+                prevDelta
+            }
         }
 
         fun currentBox(k: K): ItemBounds {
@@ -1050,10 +1491,23 @@ object WidgetGrids {
         val paddedFixed = fixedObstacles.map { obs ->
             ItemBounds(obs.left - gap, obs.top - gap, obs.right + gap, obs.bottom + gap)
         }
-        val initialOverlap = layoutOverlapArea(prevBoxes.values.toList(), paddedFixed, gap)
+
+        // Enforce bounds and fixed-obstacle clearance for all members of rigidGroup
+        if (effectiveRigid.size > 1) {
+            for (member in effectiveRigid) {
+                val mBox = currentBox(member)
+                val (validDx, validDy) = clampDelta(mBox, 0f, 0f, minX, maxX, minY, maxY)
+                if (abs(validDx) > EPS || abs(validDy) > EPS) return null
+                if (paddedFixed.any { overlaps(mBox, it) }) return null
+            }
+        }
+
+        val prevBoxList = prevBoxes.values.toList()
+        val initialPhysicalOverlap = layoutOverlapArea(prevBoxList, fixedObstacles, 0f)
+        val initialGappedOverlap = layoutOverlapArea(prevBoxList, paddedFixed, gap)
 
         val queue = ArrayDeque<K>()
-        queue.addLast(activeTarget)
+        effectiveRigid.forEach { queue.addLast(it) }
         val maxSteps = (startBounds.size * startBounds.size * 4).coerceAtLeast(16)
         var steps = 0
 
@@ -1077,7 +1531,7 @@ object WidgetGrids {
             )
 
             for (victim in startBounds.keys) {
-                if (victim == pusher || victim == activeTarget) continue
+                if (victim == pusher || victim in effectiveRigid) continue
                 val victimBox = currentBox(victim)
                 if (!overlaps(paddedSweptPusher, victimBox)) continue
 
@@ -1090,8 +1544,8 @@ object WidgetGrids {
                     pusherPrev = pusherPrev,
                     victimPrev = victimPrev,
                     victimDelta = victimDelta,
-                    moveBiasDx = activeDelta.first - activeLast.first,
-                    moveBiasDy = activeDelta.second - activeLast.second,
+                    moveBiasDx = stepDx,
+                    moveBiasDy = stepDy,
                     gap = gap
                 )
 
@@ -1116,12 +1570,21 @@ object WidgetGrids {
         }
 
         val finalBoxes = startBounds.keys.map { currentBox(it) }
-        val finalOverlap = layoutOverlapArea(finalBoxes, paddedFixed, gap)
-        if (initialOverlap <= AREA_EPS) {
-            if (finalOverlap > AREA_EPS) return null
+        val finalPhysicalOverlap = layoutOverlapArea(finalBoxes, fixedObstacles, 0f)
+        val finalGappedOverlap = layoutOverlapArea(finalBoxes, paddedFixed, gap)
+
+        if (initialPhysicalOverlap <= AREA_EPS) {
+            if (finalPhysicalOverlap > AREA_EPS) return null
         } else {
-            if (finalOverlap > initialOverlap + AREA_EPS) return null
+            if (finalPhysicalOverlap > initialPhysicalOverlap + AREA_EPS) return null
         }
+
+        if (initialGappedOverlap <= AREA_EPS) {
+            if (finalGappedOverlap > AREA_EPS) return null
+        } else {
+            if (finalGappedOverlap > initialGappedOverlap + AREA_EPS) return null
+        }
+
         return deltas
     }
 
@@ -1135,16 +1598,35 @@ object WidgetGrids {
         moveBiasDy: Float,
         gap: Float
     ): Pair<Float, Float> {
-        val wasAbove = pusherPrev.bottom <= victimPrev.top + gap + EPS
-        val wasBelow = pusherPrev.top >= victimPrev.bottom - gap - EPS
-        val wasLeft = pusherPrev.right <= victimPrev.left + gap + EPS
-        val wasRight = pusherPrev.left >= victimPrev.right - gap - EPS
+        val aboveGap = victimPrev.top - pusherPrev.bottom
+        val belowGap = pusherPrev.top - victimPrev.bottom
+        val leftGap = victimPrev.left - pusherPrev.right
+        val rightGap = pusherPrev.left - victimPrev.right
 
-        return when {
-            wasAbove -> victimDelta.first to (victimDelta.second + (paddedPusher.bottom - victimBox.top).coerceAtLeast(0f))
-            wasBelow -> victimDelta.first to (victimDelta.second + (paddedPusher.top - victimBox.bottom).coerceAtMost(0f))
-            wasLeft -> (victimDelta.first + (paddedPusher.right - victimBox.left).coerceAtLeast(0f)) to victimDelta.second
-            wasRight -> (victimDelta.first + (paddedPusher.left - victimBox.right).coerceAtMost(0f)) to victimDelta.second
+        val candidates = listOf(
+            0 to aboveGap,
+            1 to belowGap,
+            2 to leftGap,
+            3 to rightGap
+        )
+        val bestAxis = candidates
+            .filter { it.second >= -gap - EPS }
+            .maxWithOrNull(compareBy<Pair<Int, Float>> { (_, sep) ->
+                if (sep >= -EPS) sep else sep - 1f
+            }.thenBy { (axis, _) ->
+                when (axis) {
+                    0 -> if (moveBiasDy > EPS) 1f else 0f
+                    1 -> if (moveBiasDy < -EPS) 1f else 0f
+                    2 -> if (moveBiasDx > EPS) 1f else 0f
+                    else -> if (moveBiasDx < -EPS) 1f else 0f
+                }
+            })
+
+        return when (bestAxis?.first) {
+            0 -> victimDelta.first to (victimDelta.second + (paddedPusher.bottom - victimBox.top).coerceAtLeast(0f))
+            1 -> victimDelta.first to (victimDelta.second + (paddedPusher.top - victimBox.bottom).coerceAtMost(0f))
+            2 -> (victimDelta.first + (paddedPusher.right - victimBox.left).coerceAtLeast(0f)) to victimDelta.second
+            3 -> (victimDelta.first + (paddedPusher.left - victimBox.right).coerceAtMost(0f)) to victimDelta.second
             else -> {
                 val downPen = paddedPusher.bottom - victimBox.top
                 val upPen = victimBox.bottom - paddedPusher.top

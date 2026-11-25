@@ -103,7 +103,10 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onFinished: () -> Unit) {
 
     LifecycleResumeEffect(stage) {
         viewModel.onRefreshFramework()
-        if (stage == OnboardingStage.SETUP) viewModel.onCheckRoot()
+        if (stage == OnboardingStage.SETUP) {
+            viewModel.onCheckRoot()
+            viewModel.onCheckSystemUi()
+        }
         onPauseOrDispose { }
     }
 
@@ -230,13 +233,32 @@ private fun OnboardingOverlay(
                     )
                 }
                 Staggered(visible, 3) {
+                    val checkingSystemUi = state.isScoped && state.systemUiChecking
                     LockNotification(
-                        title = stringResource(R.string.action_restart_systemui),
-                        body = stringResource(
-                            if (state.restarting) R.string.restarting else R.string.notification_restart
+                        title = stringResource(
+                            if (state.isSystemUiLoaded) R.string.status_step_systemui else R.string.action_restart_systemui
                         ),
-                        ok = null,
-                        actionLabel = stringResource(R.string.action_restart),
+                        body = when {
+                            state.isSystemUiLoaded -> {
+                                val version = state.report?.systemUiVersion?.takeIf { it.isNotBlank() }
+                                if (version != null) {
+                                    stringResource(R.string.notification_systemui_version_ok, version)
+                                } else {
+                                    stringResource(R.string.notification_systemui_ok)
+                                }
+                            }
+                            state.restarting -> stringResource(R.string.restarting)
+                            checkingSystemUi -> stringResource(R.string.notification_checking)
+                            else -> stringResource(R.string.notification_restart)
+                        },
+                        ok = when {
+                            state.isSystemUiLoaded -> true
+                            state.restarting || checkingSystemUi || !state.isScoped -> null
+                            else -> false
+                        },
+                        actionLabel = if (state.isScoped && !state.isSystemUiLoaded && !state.restarting && !checkingSystemUi) {
+                            stringResource(R.string.action_restart)
+                        } else null,
                         onAction = viewModel::onRestartSystemUi
                     )
                 }

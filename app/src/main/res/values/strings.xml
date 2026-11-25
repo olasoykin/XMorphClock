@@ -52,6 +52,8 @@
     <string name="notification_scope_ok">System UI is hooked</string>
     <string name="notification_scope_missing">Add System UI to the module scope</string>
     <string name="notification_restart">Required to load the new clock</string>
+    <string name="notification_systemui_ok">Module active in System UI</string>
+    <string name="notification_systemui_version_ok">Module active · SystemUI %1$s</string>
     <string name="action_restart_app">Restart app</string>
     <string name="action_restart">Restart</string>
     <string name="hint_swipe_to_open">Swipe up to open</string>

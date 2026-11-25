@@ -60,8 +60,9 @@ data class LockscreenAffordance(
         get() = id.equals(SystemShortcut.NONE.id, ignoreCase = true)
 
     fun displayLabel(fallbackLabel: String?): String =
-        name?.takeIf { it.isNotBlank() }
+        name?.takeIf { it.isNotBlank() && !it.equals(id, ignoreCase = true) }
             ?: fallbackLabel
+            ?: name?.takeIf { it.isNotBlank() }
             ?: id.replace('_', ' ').replaceFirstChar {
                 if (it.isLowerCase()) it.titlecase() else it.toString()
             }

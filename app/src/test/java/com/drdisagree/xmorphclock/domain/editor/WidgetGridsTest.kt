@@ -633,6 +633,285 @@ class WidgetGridsTest {
         return ClockFace(name = "Tall", layers = layers, large = large, small = small)
     }
 
+    @Test
+    fun calculatePlaceholdersMovesInlineAboveClockWhenClockPushedToBottomWithActiveGrid() {
+        val clock = ItemBounds(left = 80f, top = 740f, right = 420f, bottom = 840f)
+        val grid = ItemBounds(left = 40f, top = 860f, right = 460f, bottom = 960f)
+
+        val res = WidgetGrids.calculatePlaceholderBounds(
+            clockBounds = clock,
+            gridBounds = grid,
+            inlineBounds = null,
+            widgetsAbove = false,
+            width = 500f,
+            height = 1100f,
+            unit = 420f,
+            frameLeft = 40f,
+            edgePadPx = 20f,
+            slotGap = 20f,
+            safeBottomPx = 980f,
+            gridSlotH = 72f,
+            inlineSlotH = 72f,
+            minTouch = 72f,
+            isAod = false
+        )
+
+        val inlinePh = requireNotNull(res.inlinePlaceholder)
+        assertTrue("Inline placeholder must not overlap clock", inlinePh.bottom <= clock.top - 19f)
+        assertTrue("Inline placeholder must not overlap grid", !boundsOverlap(inlinePh, grid))
+        assertTrue("Inline placeholder must stay inside top edge", inlinePh.top >= 19.5f)
+        assertTrue("Inline placeholder must stay inside safe bottom", inlinePh.bottom <= 980.5f)
+    }
+
+    @Test
+    fun calculatePlaceholdersDocksInlineBelowGridWhenRoomExists() {
+        val clock = ItemBounds(left = 80f, top = 160f, right = 420f, bottom = 280f)
+        val grid = ItemBounds(left = 40f, top = 300f, right = 460f, bottom = 400f)
+
+        val res = WidgetGrids.calculatePlaceholderBounds(
+            clockBounds = clock,
+            gridBounds = grid,
+            inlineBounds = null,
+            widgetsAbove = false,
+            width = 500f,
+            height = 1100f,
+            unit = 420f,
+            frameLeft = 40f,
+            edgePadPx = 20f,
+            slotGap = 20f,
+            safeBottomPx = 980f,
+            gridSlotH = 72f,
+            inlineSlotH = 72f,
+            minTouch = 72f,
+            isAod = false
+        )
+
+        val inlinePh = requireNotNull(res.inlinePlaceholder)
+        assertTrue("Inline placeholder should dock below grid", inlinePh.top >= grid.bottom + 19.5f)
+        assertTrue("Inline placeholder stays above safeBottom", inlinePh.bottom <= 980.5f)
+    }
+
+    @Test
+    fun calculatePlaceholdersBothEmptyAdaptWhenClockNearBottom() {
+        val clock = ItemBounds(left = 80f, top = 800f, right = 420f, bottom = 920f)
+
+        val res = WidgetGrids.calculatePlaceholderBounds(
+            clockBounds = clock,
+            gridBounds = null,
+            inlineBounds = null,
+            widgetsAbove = false,
+            width = 500f,
+            height = 1100f,
+            unit = 420f,
+            frameLeft = 40f,
+            edgePadPx = 20f,
+            slotGap = 20f,
+            safeBottomPx = 960f,
+            gridSlotH = 72f,
+            inlineSlotH = 72f,
+            minTouch = 72f,
+            isAod = false
+        )
+
+        val gridPh = requireNotNull(res.gridPlaceholder)
+        val inlinePh = requireNotNull(res.inlinePlaceholder)
+        assertTrue("Grid placeholder must avoid clock", !boundsOverlap(gridPh, clock))
+        assertTrue("Inline placeholder must avoid clock", !boundsOverlap(inlinePh, clock))
+        assertTrue("Placeholders must not overlap each other", !boundsOverlap(gridPh, inlinePh))
+        assertTrue("Grid stays within safe bounds", gridPh.top >= 19.5f && gridPh.bottom <= 960.5f)
+        assertTrue("Inline stays within safe bounds", inlinePh.top >= 19.5f && inlinePh.bottom <= 960.5f)
+    }
+
+    @Test
+    fun solveStickyDragInlineDocksToGridAndMovesWithGrid() {
+        val startBounds = mapOf(
+            LockTarget.CLOCK to ItemBounds(left = 0.2f, top = 0.1f, right = 0.8f, bottom = 0.35f),
+            LockTarget.WIDGET_GRID to ItemBounds(left = 0.12f, top = 0.45f, right = 0.88f, bottom = 0.62f),
+            LockTarget.INLINE_GRID to ItemBounds(left = 0.25f, top = 0.80f, right = 0.75f, bottom = 0.88f)
+        )
+
+        val dragUp = WidgetGrids.solveStickyDrag(
+            activeTarget = LockTarget.INLINE_GRID,
+            startBounds = startBounds,
+            rawDx = 0f,
+            rawDy = -0.16f,
+            lastValidDeltas = startBounds.keys.associateWith { 0f to 0f },
+            gridDocked = false,
+            inlineDocked = false,
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.60f,
+            fixedObstacles = emptyList(),
+            gap = 0.018f
+        )
+
+        assertTrue("Inline dragged to widget grid should dock", dragUp.inlineDocked)
+        assertTrue("Attachment event should fire", dragUp.attachedEvent)
+        val gridAfter = shift(startBounds.getValue(LockTarget.WIDGET_GRID), dragUp.deltas.getValue(LockTarget.WIDGET_GRID))
+        val inlineAfter = shift(startBounds.getValue(LockTarget.INLINE_GRID), dragUp.deltas.getValue(LockTarget.INLINE_GRID))
+        assertTrue("Inline must never cross widget grid", inlineAfter.top >= gridAfter.bottom - 1e-4f)
+
+        // Now dragging WIDGET_GRID should carry the docked INLINE_GRID along with it
+        val carryBounds = mapOf(
+            LockTarget.CLOCK to startBounds.getValue(LockTarget.CLOCK),
+            LockTarget.WIDGET_GRID to gridAfter,
+            LockTarget.INLINE_GRID to inlineAfter
+        )
+        val dragGrid = WidgetGrids.solveStickyDrag(
+            activeTarget = LockTarget.WIDGET_GRID,
+            startBounds = carryBounds,
+            rawDx = 0.04f,
+            rawDy = 0.12f,
+            lastValidDeltas = carryBounds.keys.associateWith { 0f to 0f },
+            gridDocked = dragUp.gridDocked,
+            inlineDocked = dragUp.inlineDocked,
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.60f,
+            fixedObstacles = emptyList(),
+            gap = 0.018f
+        )
+
+        assertEquals(0.04f, dragGrid.deltas.getValue(LockTarget.INLINE_GRID).first, 1e-4f)
+        assertEquals(0.12f, dragGrid.deltas.getValue(LockTarget.INLINE_GRID).second, 1e-4f)
+    }
+
+    @Test
+    fun solveStickyDragClockApproachingInlineDockedBetweenClockAndGridDoesNotCross() {
+        val startBounds = mapOf(
+            LockTarget.CLOCK to ItemBounds(left = 0.2f, top = 0.10f, right = 0.8f, bottom = 0.35f),
+            LockTarget.INLINE_GRID to ItemBounds(left = 0.25f, top = 0.56f, right = 0.75f, bottom = 0.64f),
+            LockTarget.WIDGET_GRID to ItemBounds(left = 0.12f, top = 0.68f, right = 0.88f, bottom = 0.85f)
+        )
+
+        val result = WidgetGrids.solveStickyDrag(
+            activeTarget = LockTarget.CLOCK,
+            startBounds = startBounds,
+            rawDx = 0f,
+            rawDy = 0.35f,
+            lastValidDeltas = startBounds.keys.associateWith { 0f to 0f },
+            gridDocked = false,
+            inlineDocked = true,
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.60f,
+            fixedObstacles = emptyList(),
+            gap = 0.018f
+        )
+
+        val clockFinal = shift(startBounds.getValue(LockTarget.CLOCK), result.deltas.getValue(LockTarget.CLOCK))
+        val inlineFinal = shift(startBounds.getValue(LockTarget.INLINE_GRID), result.deltas.getValue(LockTarget.INLINE_GRID))
+        val gridFinal = shift(startBounds.getValue(LockTarget.WIDGET_GRID), result.deltas.getValue(LockTarget.WIDGET_GRID))
+
+        assertTrue("Clock must stay above inline", clockFinal.bottom <= inlineFinal.top - 0.017f)
+        assertTrue("Inline must stay above grid without crossing", inlineFinal.bottom <= gridFinal.top - 0.017f)
+    }
+
+    @Test
+    fun solveStickyDragClockPinnedAgainstTightInlineAndGridNeverPenetrates() {
+        // Inline starts closer than gap (0.01f < 0.018f) above grid, and grid is pinned at maxY
+        val startBounds = mapOf(
+            LockTarget.CLOCK to ItemBounds(left = 0.2f, top = 0.50f, right = 0.8f, bottom = 0.80f),
+            LockTarget.INLINE_GRID to ItemBounds(left = 0.25f, top = 0.90f, right = 0.75f, bottom = 0.98f),
+            LockTarget.WIDGET_GRID to ItemBounds(left = 0.12f, top = 0.99f, right = 0.88f, bottom = 1.16f)
+        )
+
+        val result = WidgetGrids.solveStickyDrag(
+            activeTarget = LockTarget.CLOCK,
+            startBounds = startBounds,
+            rawDx = 0f,
+            rawDy = 0.40f,
+            lastValidDeltas = startBounds.keys.associateWith { 0f to 0f },
+            gridDocked = false,
+            inlineDocked = false,
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.16f,
+            fixedObstacles = emptyList(),
+            gap = 0.018f
+        )
+
+        val clockFinal = shift(startBounds.getValue(LockTarget.CLOCK), result.deltas.getValue(LockTarget.CLOCK))
+        val inlineFinal = shift(startBounds.getValue(LockTarget.INLINE_GRID), result.deltas.getValue(LockTarget.INLINE_GRID))
+        val gridFinal = shift(startBounds.getValue(LockTarget.WIDGET_GRID), result.deltas.getValue(LockTarget.WIDGET_GRID))
+
+        assertFalse("Clock must not physically overlap inline", boundsOverlap(clockFinal, inlineFinal))
+        assertFalse("Inline must not physically overlap grid", boundsOverlap(inlineFinal, gridFinal))
+    }
+
+    @Test
+    fun solvePushLayoutSideBySideNeighborPushesHorizontally() {
+        val startBounds = mapOf(
+            LockTarget.CLOCK to ItemBounds(left = 0.10f, top = 0.20f, right = 0.45f, bottom = 0.40f),
+            LockTarget.INLINE_GRID to ItemBounds(left = 0.48f, top = 0.24f, right = 0.78f, bottom = 0.34f)
+        )
+
+        val solved = WidgetGrids.solvePushLayout(
+            activeTarget = LockTarget.CLOCK,
+            startBounds = startBounds,
+            rawDx = 0.12f,
+            rawDy = 0f,
+            lastValidDeltas = startBounds.keys.associateWith { 0f to 0f },
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.60f,
+            fixedObstacles = emptyList(),
+            gap = 0.018f
+        )
+
+        val clockFinal = shift(startBounds.getValue(LockTarget.CLOCK), solved.getValue(LockTarget.CLOCK))
+        val inlineFinal = shift(startBounds.getValue(LockTarget.INLINE_GRID), solved.getValue(LockTarget.INLINE_GRID))
+        assertTrue("Inline should be pushed right along X", inlineFinal.left >= clockFinal.right + 0.017f)
+        assertEquals(0.24f, inlineFinal.top, 1e-4f)
+    }
+
+    @Test
+    fun flipWidgetsPositionAodStatesUpdateAodPlacements() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+        val clockBounds = ItemBounds(left = 0.1f, top = 0.35f, right = 0.9f, bottom = 0.65f)
+
+        val comp = Composition()
+            .add(100, large = FacePlacement(0.5f, 0.70f), small = FacePlacement(0.5f, 0.70f))
+            .add(200, large = FacePlacement(0.5f, 0.90f), small = FacePlacement(0.5f, 0.90f))
+
+        val flippedLargeAod = WidgetGrids.flipWidgetsPosition(
+            composition = comp,
+            widgetsAbove = true,
+            itemState = ItemState.AOD_LARGE,
+            faceOf = { map[it] },
+            clockBounds = clockBounds,
+            maxY = 1.6f
+        )
+        val flippedAllAod = WidgetGrids.flipWidgetsPosition(
+            composition = flippedLargeAod,
+            widgetsAbove = true,
+            itemState = ItemState.AOD_SMALL,
+            faceOf = { map[it] },
+            clockBounds = clockBounds,
+            maxY = 1.6f
+        )
+
+        val gridAodLarge = flippedAllAod.items.first { it.style == 100 }.aodLarge!!
+        val inlineAodLarge = flippedAllAod.items.first { it.style == 200 }.aodLarge!!
+        val gridAodSmall = flippedAllAod.items.first { it.style == 100 }.aodSmall!!
+        val inlineAodSmall = flippedAllAod.items.first { it.style == 200 }.aodSmall!!
+
+        assertTrue(gridAodLarge.y < clockBounds.top)
+        assertTrue(inlineAodLarge.y < gridAodLarge.y)
+        assertTrue(gridAodSmall.y < clockBounds.top)
+        assertTrue(inlineAodSmall.y < gridAodSmall.y)
+    }
+
+    private fun boundsOverlap(a: ItemBounds, b: ItemBounds): Boolean =
+        a.left < b.right - 1e-4f && a.right > b.left + 1e-4f && a.top < b.bottom - 1e-4f && a.bottom > b.top + 1e-4f
+
     private fun shift(b: ItemBounds, delta: Pair<Float, Float>): ItemBounds =
         ItemBounds(b.left + delta.first, b.top + delta.second, b.right + delta.first, b.bottom + delta.second)
 }

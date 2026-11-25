@@ -10,9 +10,8 @@ object SystemShortcutController {
     private const val AFFORDANCES_URI = "content://com.android.systemui.customization/lockscreen_quickaffordance/affordances"
     private val SLOT_ID_REGEX = Regex("""slot_id=([^,\s]+)""")
     private val AFFORDANCE_ID_REGEX = Regex("""affordance_id=([^,\s]+)""")
-    private val AFFORDANCE_ROW_REGEX = Regex(
-        """id=([^,]+),\s*name=(.*?),\s*is_enabled=([^,\s]+)(?:,\s*enablement_explanation=(.*?)(?:,\s*enablement_action_text=|$))?"""
-    )
+    private val ROW_PREFIX_REGEX = Regex("""^\s*Row:\s*\d+\s*""", RegexOption.IGNORE_CASE)
+    private val KEY_VALUE_BOUNDARY_REGEX = Regex("""(?:^|,\s*)([a-zA-Z][a-zA-Z0-9_]*)=""")
 
     suspend fun apply(slot: ShortcutSlot, affordanceId: String): Boolean {
         if (XposedServiceSource.isPreviewOnly) return false
@@ -61,20 +60,29 @@ object SystemShortcutController {
         ) {
             it.readBytes().decodeToString()
         }?.trim().orEmpty()
-        if (raw.isEmpty() || !raw.contains("Row:", ignoreCase = true)) return null
+        return parseAvailableAffordances(raw)
+    }
+
+    internal fun parseAvailableAffordances(raw: String): List<LockscreenAffordance>? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || !trimmed.contains("Row:", ignoreCase = true)) return null
 
         val items = ArrayList<LockscreenAffordance>()
         items += LockscreenAffordance(id = SystemShortcut.NONE.id)
-        raw.lineSequence().forEach { line ->
-            val match = AFFORDANCE_ROW_REGEX.find(line) ?: return@forEach
-            val id = match.groupValues[1].trim()
-            if (id.isEmpty() || id.equals("NULL", ignoreCase = true) || id.equals(SystemShortcut.NONE.id, ignoreCase = true)) {
-                return@forEach
-            }
-            val name = match.groupValues[2].trim().takeUnless { it.equals("NULL", ignoreCase = true) || it.isEmpty() }
-            val enabledRaw = match.groupValues[3].trim()
+        val seenIds = HashSet<String>().apply { add(SystemShortcut.NONE.id.lowercase()) }
+
+        trimmed.lineSequence().forEach { line ->
+            val cols = parseRowColumns(line)
+            val id = cols["id"]?.takeUnless { it.isEmpty() || it.equals("NULL", ignoreCase = true) }
+                ?: return@forEach
+            if (!seenIds.add(id.lowercase())) return@forEach
+
+            val name = cols["name"]?.takeUnless { it.isEmpty() || it.equals("NULL", ignoreCase = true) }
+            val enabledRaw = cols["is_enabled"].orEmpty()
             val isEnabled = enabledRaw != "0" && !enabledRaw.equals("false", ignoreCase = true)
-            val explanation = match.groupValues[4].trim().takeUnless { it.equals("NULL", ignoreCase = true) || it.isEmpty() }
+            val explanation = cols["enablement_explanation"]?.takeUnless {
+                it.isEmpty() || it.equals("NULL", ignoreCase = true)
+            }
             items += LockscreenAffordance(
                 id = id,
                 name = name,
@@ -83,5 +91,22 @@ object SystemShortcutController {
             )
         }
         return if (items.size > 1) items else null
+    }
+
+    private fun parseRowColumns(line: String): Map<String, String> {
+        val body = ROW_PREFIX_REGEX.replaceFirst(line, "").trim()
+        if (body.isEmpty()) return emptyMap()
+        val matches = KEY_VALUE_BOUNDARY_REGEX.findAll(body).toList()
+        if (matches.isEmpty()) return emptyMap()
+        val result = LinkedHashMap<String, String>(matches.size)
+        for (i in matches.indices) {
+            val key = matches[i].groupValues[1].lowercase()
+            val valueStart = matches[i].range.last + 1
+            val valueEnd = if (i + 1 < matches.size) matches[i + 1].range.first else body.length
+            if (valueStart <= valueEnd) {
+                result[key] = body.substring(valueStart, valueEnd).trim()
+            }
+        }
+        return result
     }
 }

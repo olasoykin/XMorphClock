@@ -10,10 +10,12 @@ import com.drdisagree.xmorphclock.domain.model.ThemeMode
 import com.drdisagree.xmorphclock.domain.usecase.ObserveDepthSettingsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveDepthSubjectUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveFaceDataUseCase
+import com.drdisagree.xmorphclock.domain.usecase.ObserveFrameworkUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveHookReportUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveSampleFaceDataUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveSettingsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveWallpaperUseCase
+import com.drdisagree.xmorphclock.domain.usecase.RequestHookReportUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SyncAppliedFaceUseCase
 import com.drdisagree.xmorphclock.engine.render.BackdropCache
 import com.drdisagree.xmorphclock.ui.components.DepthLayer
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -31,6 +34,8 @@ import kotlinx.coroutines.launch
 class AppViewModel(
     observeWallpaper: ObserveWallpaperUseCase,
     observeHookReport: ObserveHookReportUseCase,
+    observeFramework: ObserveFrameworkUseCase,
+    private val requestHookReport: RequestHookReportUseCase,
     observeSettings: ObserveSettingsUseCase,
     syncAppliedFace: SyncAppliedFaceUseCase,
     observeFaceData: ObserveFaceDataUseCase,
@@ -41,6 +46,17 @@ class AppViewModel(
 
     init {
         viewModelScope.launch { syncAppliedFace() }
+        viewModelScope.launch {
+            observeFramework()
+                .map { it?.scope?.contains(SYSTEMUI) == true }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { requestHookReport() }
+        }
+    }
+
+    fun onResume() {
+        requestHookReport()
     }
 
     val themeMode: StateFlow<ThemeMode> = observeSettings()
@@ -74,3 +90,4 @@ class AppViewModel(
 }
 
 private const val STOP_TIMEOUT = 5_000L
+private const val SYSTEMUI = "com.android.systemui"

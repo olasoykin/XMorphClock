@@ -70,6 +70,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        appViewModel.onResume()
+    }
+
     private fun holdSplash() {
         val content = window.decorView
         val started = SystemClock.uptimeMillis()

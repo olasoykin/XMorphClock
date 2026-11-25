@@ -376,6 +376,8 @@ fun BoxScope.ItemOverlay(
                         if (stickyResult.attachedEvent) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
+                        val prevGridDocked = liveGridDocked
+                        val prevInlineDocked = liveInlineDocked
                         liveGridDocked = stickyResult.gridDocked
                         liveInlineDocked = stickyResult.inlineDocked
 
@@ -389,8 +391,9 @@ fun BoxScope.ItemOverlay(
                                 }
                             }
                         }
+                        val dockedChanged = liveGridDocked != prevGridDocked || liveInlineDocked != prevInlineDocked
                         appliedDeltas = stickyResult.deltas
-                        if (steps.isNotEmpty()) {
+                        if (steps.isNotEmpty() || dockedChanged) {
                             currentDrag(steps, liveGridDocked, liveInlineDocked)
                         }
                     }
@@ -479,25 +482,63 @@ fun BoxScope.ItemOverlay(
         listOfNotNull(gridRect ?: gridPlaceholder, inlineRect ?: inlinePlaceholder)
             .maxByOrNull { it.bottom }
     }
+    val topMostWidgetRect = remember(gridRect, gridPlaceholder, inlineRect, inlinePlaceholder) {
+        listOfNotNull(gridRect ?: gridPlaceholder, inlineRect ?: inlinePlaceholder)
+            .minByOrNull { it.top }
+    }
 
     val widgetSelected = activeTarget == LockTarget.WIDGET_GRID || activeTarget == LockTarget.INLINE_GRID
-    if (!isAod && widgetSelected && bottomMostWidgetRect != null && !activeDragging && unit > 0f) {
+    if (widgetSelected && bottomMostWidgetRect != null && topMostWidgetRect != null && !activeDragging && unit > 0f) {
         val buttonSize = 34.dp
         val buttonPx = with(density) { buttonSize.toPx() }
-        val cx = (bottomMostWidgetRect.left + bottomMostWidgetRect.right) / 2f
-        val desiredCy = if (composition.widgetsAbove && clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
+        val btnRadius = buttonPx / 2f
+        val btnGap = with(density) { 8.dp.toPx() }
+        val activeWidgetRect = when (activeTarget) {
+            LockTarget.WIDGET_GRID -> gridRect ?: gridPlaceholder ?: bottomMostWidgetRect
+            LockTarget.INLINE_GRID -> inlineRect ?: inlinePlaceholder ?: bottomMostWidgetRect
+            else -> bottomMostWidgetRect
+        }
+        val cx = ((activeWidgetRect.left + activeWidgetRect.right) / 2f)
+            .coerceIn(edgePadPx + btnRadius, (width - edgePadPx - btnRadius).coerceAtLeast(edgePadPx + btnRadius))
+        val minBtnY = edgePadPx + btnRadius
+        val maxBtnY = (safeBottomPx - btnRadius - with(density) { 4.dp.toPx() }).coerceAtLeast(minBtnY)
+
+        val toggleObstacles = listOfNotNull(clockRect, gridRect, inlineRect, gridPlaceholder, inlinePlaceholder)
+        val candidateYs = buildList {
+            if (composition.widgetsAbove) {
+                if (clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
+                    add((bottomMostWidgetRect.bottom + clockRect.top) / 2f)
+                }
+                add(topMostWidgetRect.top - btnGap - btnRadius)
+                add(bottomMostWidgetRect.bottom + btnGap + btnRadius)
+            } else {
+                add(bottomMostWidgetRect.bottom + btnGap + btnRadius)
+                add(activeWidgetRect.bottom + btnGap + btnRadius)
+                add(topMostWidgetRect.top - btnGap - btnRadius)
+                if (clockRect != null && topMostWidgetRect.top > clockRect.bottom) {
+                    add((clockRect.bottom + topMostWidgetRect.top) / 2f)
+                }
+                add(activeWidgetRect.top - btnGap - btnRadius)
+            }
+        }
+        val validCy = candidateYs.firstOrNull { cy ->
+            cy in minBtnY..maxBtnY && toggleObstacles.none { obs ->
+                cx + btnRadius > obs.left + 1f &&
+                    cx - btnRadius < obs.right - 1f &&
+                    cy + btnRadius > obs.top + 1f &&
+                    cy - btnRadius < obs.bottom - 1f
+            }
+        }
+        val fallbackCy = if (composition.widgetsAbove && clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
             (bottomMostWidgetRect.bottom + clockRect.top) / 2f
         } else {
-            bottomMostWidgetRect.bottom + with(density) { 8.dp.toPx() } + buttonPx / 2f
-        }
-        val maxBtnY = safeBottomPx - buttonPx / 2f - with(density) { 4.dp.toPx() }
-        val clampedCy = desiredCy.coerceIn(edgePadPx + buttonPx / 2f, maxBtnY)
-        val clampedCx = cx.coerceIn(edgePadPx + buttonPx / 2f, width - edgePadPx - buttonPx / 2f)
+            bottomMostWidgetRect.bottom + btnGap + btnRadius
+        }.coerceIn(minBtnY, maxBtnY)
 
         GridPositionToggleButton(
             widgetsAbove = composition.widgetsAbove,
-            centerX = clampedCx,
-            centerY = clampedCy,
+            centerX = cx,
+            centerY = validCy ?: fallbackCy,
             onToggle = currentToggleWidgetsPosition
         )
     }

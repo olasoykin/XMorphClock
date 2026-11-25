@@ -23,7 +23,15 @@ data class HookReport(
     val isHealthy: Boolean
         get() = adapter != null && signals.all { it.source != null } && errors.isEmpty()
 
-    fun isStale(installedAt: Long): Boolean = moduleUpdatedAt in 1 until installedAt - STALE_SLACK_MS
+    fun isStale(installedAt: Long): Boolean =
+        moduleUpdatedAt in 1 until installedAt - STALE_SLACK_MS ||
+            (moduleUpdatedAt == 0L && moduleLoadedAt in 1 until installedAt - STALE_SLACK_MS)
+
+    fun isFreshSince(sinceMs: Long, installedAt: Long, clockSlackMs: Long = 1_000L): Boolean {
+        if (isStale(installedAt)) return false
+        val loaded = if (moduleLoadedAt > 0L) moduleLoadedAt else timestamp
+        return loaded >= sinceMs - clockSlackMs
+    }
 
     fun attachState(installedAt: Long): ClockAttachState = when {
         state[STATE_ENABLED] == false.toString() -> ClockAttachState.OFF

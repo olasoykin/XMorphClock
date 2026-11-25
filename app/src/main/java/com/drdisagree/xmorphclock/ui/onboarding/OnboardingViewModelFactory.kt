@@ -10,7 +10,10 @@ fun onboardingViewModelFactory(container: AppContainer): ViewModelProvider.Facto
         OnboardingViewModel(
             observeFaces = container.observeFaces,
             observeFramework = container.observeFramework,
+            observeHookReport = container.observeHookReport,
+            getInstallTime = container.getInstallTime,
             refreshFramework = container.refreshFramework,
+            requestHookReport = container.requestHookReport,
             checkRoot = container.checkRoot,
             restartSystemUi = container.restartSystemUi,
             setOnboardingDone = container.setOnboardingDone,

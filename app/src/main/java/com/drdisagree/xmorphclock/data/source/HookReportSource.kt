@@ -51,7 +51,9 @@ class HookReportSource(private val context: Context) {
 
     fun request() {
         context.sendBroadcast(
-            Intent(ReportContract.ACTION_REQUEST).setPackage(ReportContract.SYSTEMUI_PACKAGE)
+            Intent(ReportContract.ACTION_REQUEST)
+                .setPackage(ReportContract.SYSTEMUI_PACKAGE)
+                .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
         )
     }
 }

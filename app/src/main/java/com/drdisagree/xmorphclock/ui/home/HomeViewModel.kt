@@ -267,15 +267,17 @@ class HomeViewModel(
         inlineDocked: Boolean? = null
     ) {
         val state = uiState.value
-        var current = draftComposition.value ?: state.composition
-        if (gridDocked != null || inlineDocked != null) {
-            current = current.copy(
-                gridDocked = gridDocked ?: current.gridDocked,
-                inlineDocked = inlineDocked ?: current.inlineDocked
+        val initial = draftComposition.value ?: state.composition
+        var current = if (gridDocked != null || inlineDocked != null) {
+            initial.copy(
+                gridDocked = gridDocked ?: initial.gridDocked,
+                inlineDocked = inlineDocked ?: initial.inlineDocked
             )
+        } else {
+            initial
         }
-        var changed = (gridDocked != null && gridDocked != state.composition.gridDocked) ||
-            (inlineDocked != null && inlineDocked != state.composition.inlineDocked)
+        var changed = (gridDocked != null && gridDocked != initial.gridDocked) ||
+            (inlineDocked != null && inlineDocked != initial.inlineDocked)
         deltas.forEach { (target, step) ->
             val (dx, dy) = step
             if (dx == 0f && dy == 0f) return@forEach
@@ -314,10 +316,18 @@ class HomeViewModel(
         val nextAbove = !state.composition.widgetsAbove
         val largeClock = clockBoundsOf(state, ItemState.LARGE)
         val smallClock = clockBoundsOf(state, ItemState.SMALL)
+        val aodLargeClock = clockBoundsOf(state, ItemState.AOD_LARGE)
+        val aodSmallClock = clockBoundsOf(state, ItemState.AOD_SMALL)
         val largeMaxY = maxYOf(ItemState.LARGE)
         val smallMaxY = maxYOf(ItemState.SMALL)
+        val aodLargeMaxY = maxYOf(ItemState.AOD_LARGE)
+        val aodSmallMaxY = maxYOf(ItemState.AOD_SMALL)
+        val hasClockAodLarge = state.clockPreset?.face?.aodLarge != null
+        val hasClockAodSmall = state.clockPreset?.face?.aodSmall != null
         viewModelScope.launch {
             updateComposition { current ->
+                val hasCustomAodLarge = hasClockAodLarge || current.items.any { it.aodLarge != null }
+                val hasCustomAodSmall = hasClockAodSmall || current.items.any { it.aodSmall != null }
                 var next = current.copy(widgetsAbove = nextAbove, gridDocked = true, inlineDocked = true)
                 next = WidgetGrids.flipWidgetsPosition(
                     composition = next,
@@ -335,6 +345,26 @@ class HomeViewModel(
                     clockBounds = smallClock,
                     maxY = smallMaxY
                 )
+                if (hasCustomAodLarge) {
+                    next = WidgetGrids.flipWidgetsPosition(
+                        composition = next,
+                        widgetsAbove = nextAbove,
+                        itemState = ItemState.AOD_LARGE,
+                        faceOf = state::faceOf,
+                        clockBounds = aodLargeClock,
+                        maxY = aodLargeMaxY
+                    )
+                }
+                if (hasCustomAodSmall) {
+                    next = WidgetGrids.flipWidgetsPosition(
+                        composition = next,
+                        widgetsAbove = nextAbove,
+                        itemState = ItemState.AOD_SMALL,
+                        faceOf = state::faceOf,
+                        clockBounds = aodSmallClock,
+                        maxY = aodSmallMaxY
+                    )
+                }
                 next
             }
         }
@@ -371,7 +401,15 @@ class HomeViewModel(
             val largeClockBottom = largeClock?.bottom ?: clockBottomY(state, ItemState.LARGE)
             val smallClockBottom = smallClock?.bottom ?: clockBottomY(state, ItemState.SMALL)
             updateComposition { current ->
-                var next = current.add(style, null, null)
+                val gridWasEmpty = WidgetGrids.gridItems(current, state::faceOf).isEmpty()
+                val inlineWasEmpty = WidgetGrids.inlineItems(current, state::faceOf).isEmpty()
+                var next = current.add(style, null, null).let { added ->
+                    when {
+                        zone == WidgetZone.GRID_1X4 && gridWasEmpty -> added.copy(gridDocked = true)
+                        zone == WidgetZone.INLINE_1X2 && inlineWasEmpty -> added.copy(inlineDocked = true)
+                        else -> added
+                    }
+                }
                 val (clearedLarge, effectiveLargeClock) = WidgetGrids.ensureClockClearanceForWidgets(
                     composition = next,
                     itemState = ItemState.LARGE,
@@ -391,6 +429,44 @@ class HomeViewModel(
                 val effLargeBottom = effectiveLargeClock?.bottom ?: largeClockBottom
                 val effSmallBottom = effectiveSmallClock?.bottom ?: smallClockBottom
 
+                if (zone == WidgetZone.INLINE_1X2 && WidgetGrids.gridItems(next, state::faceOf).isNotEmpty()) {
+                    val gridIds = WidgetGrids.gridItems(next, state::faceOf).mapTo(HashSet()) { it.id }
+                    if (next.gridDocked && largeClock != null && effectiveLargeClock != null) {
+                        val shiftY = effectiveLargeClock.top - largeClock.top
+                        if (shiftY != 0f) {
+                            next = WidgetGrids.applyMovedItems(next, gridIds, ItemState.LARGE, 0f, shiftY) { FacePlacement() }
+                        }
+                    }
+                    if (next.gridDocked && smallClock != null && effectiveSmallClock != null) {
+                        val shiftY = effectiveSmallClock.top - smallClock.top
+                        if (shiftY != 0f) {
+                            next = WidgetGrids.applyMovedItems(next, gridIds, ItemState.SMALL, 0f, shiftY) { FacePlacement() }
+                        }
+                    }
+                    next = WidgetGrids.layoutZone(
+                        composition = next,
+                        zone = WidgetZone.GRID_1X4,
+                        itemState = ItemState.LARGE,
+                        faceOf = state::faceOf,
+                        clockBottomY = effLargeBottom,
+                        maxY = largeMaxY,
+                        centerHorizontally = next.gridDocked,
+                        clockBounds = effectiveLargeClock,
+                        widgetsAbove = next.widgetsAbove
+                    )
+                    next = WidgetGrids.layoutZone(
+                        composition = next,
+                        zone = WidgetZone.GRID_1X4,
+                        itemState = ItemState.SMALL,
+                        faceOf = state::faceOf,
+                        clockBottomY = effSmallBottom,
+                        maxY = smallMaxY,
+                        centerHorizontally = next.gridDocked,
+                        clockBounds = effectiveSmallClock,
+                        widgetsAbove = next.widgetsAbove
+                    )
+                }
+
                 next = WidgetGrids.layoutZone(
                     composition = next,
                     zone = zone,
@@ -400,7 +476,7 @@ class HomeViewModel(
                     maxY = largeMaxY,
                     centerHorizontally = true,
                     clockBounds = effectiveLargeClock,
-                    widgetsAbove = current.widgetsAbove
+                    widgetsAbove = next.widgetsAbove
                 )
                 next = WidgetGrids.layoutZone(
                     composition = next,
@@ -411,7 +487,7 @@ class HomeViewModel(
                     maxY = smallMaxY,
                     centerHorizontally = true,
                     clockBounds = effectiveSmallClock,
-                    widgetsAbove = current.widgetsAbove
+                    widgetsAbove = next.widgetsAbove
                 )
                 if (zone == WidgetZone.GRID_1X4 && WidgetGrids.inlineItems(next, state::faceOf).isNotEmpty()) {
                     next = WidgetGrids.layoutZone(
@@ -421,8 +497,9 @@ class HomeViewModel(
                         faceOf = state::faceOf,
                         clockBottomY = effLargeBottom,
                         maxY = largeMaxY,
+                        centerHorizontally = next.inlineDocked,
                         clockBounds = effectiveLargeClock,
-                        widgetsAbove = current.widgetsAbove
+                        widgetsAbove = next.widgetsAbove
                     )
                     next = WidgetGrids.layoutZone(
                         composition = next,
@@ -431,8 +508,9 @@ class HomeViewModel(
                         faceOf = state::faceOf,
                         clockBottomY = effSmallBottom,
                         maxY = smallMaxY,
+                        centerHorizontally = next.inlineDocked,
                         clockBounds = effectiveSmallClock,
-                        widgetsAbove = current.widgetsAbove
+                        widgetsAbove = next.widgetsAbove
                     )
                 }
                 next
@@ -461,6 +539,11 @@ class HomeViewModel(
         val smallClockBottom = smallClock?.bottom ?: clockBottomY(state, ItemState.SMALL)
         updateComposition { current ->
             var next = current.remove(itemId)
+            if (zone == WidgetZone.GRID_1X4 && WidgetGrids.gridItems(next, state::faceOf).isEmpty()) {
+                next = next.copy(gridDocked = true)
+            } else if (zone == WidgetZone.INLINE_1X2 && WidgetGrids.inlineItems(next, state::faceOf).isEmpty()) {
+                next = next.copy(inlineDocked = true)
+            }
             next = WidgetGrids.layoutZone(
                 composition = next,
                 zone = zone,
@@ -470,7 +553,7 @@ class HomeViewModel(
                 maxY = largeMaxY,
                 centerHorizontally = true,
                 clockBounds = largeClock,
-                widgetsAbove = current.widgetsAbove
+                widgetsAbove = next.widgetsAbove
             )
             next = WidgetGrids.layoutZone(
                 composition = next,
@@ -481,7 +564,7 @@ class HomeViewModel(
                 maxY = smallMaxY,
                 centerHorizontally = true,
                 clockBounds = smallClock,
-                widgetsAbove = current.widgetsAbove
+                widgetsAbove = next.widgetsAbove
             )
             next
         }
