@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.drdisagree.xmorphclock.domain.editor.ItemGroups
 import com.drdisagree.xmorphclock.domain.editor.ItemSnapper
+import com.drdisagree.xmorphclock.domain.editor.WidgetGrids
 import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
@@ -85,6 +86,9 @@ fun EditorCanvas(
     playToken: Int,
     onSelect: (String?) -> Unit,
     onMove: (String, Float, Float) -> Unit,
+    onMoveAll: (Map<String, Pair<Float, Float>>) -> Unit = { deltas ->
+        deltas.forEach { (k, v) -> onMove(k, v.first, v.second) }
+    },
     onResizeStart: (String) -> Pair<Float, Float>,
     onResize: (String, Float, Float) -> Unit,
     onTransformStart: (String) -> Pair<Float, Float>,
@@ -116,7 +120,7 @@ fun EditorCanvas(
     val currentGrouping by rememberUpdatedState(grouping)
     val currentToggleGrouping by rememberUpdatedState(onToggleGrouping)
     val currentSelect by rememberUpdatedState(onSelect)
-    val currentMove by rememberUpdatedState(onMove)
+    val currentMoveAll by rememberUpdatedState(onMoveAll)
     val currentResizeStart by rememberUpdatedState(onResizeStart)
     val currentResize by rememberUpdatedState(onResize)
     val currentResizable by rememberUpdatedState<(String) -> Boolean>({ id ->
@@ -243,12 +247,45 @@ fun EditorCanvas(
                             (rectOf(visible, id) ?: rectOf(rects, id))?.let { start = RectF(it) }
                         }
                         val others = if (mode == MODE_MOVE) id?.let { snapTargets(visible, it) }.orEmpty() else emptyList()
+                        val clockWAtDown = view?.width?.toFloat()?.takeIf { it > 0f } ?: 1f
+                        val pushTargets = if (mode == MODE_MOVE && id != null) {
+                            buildMap {
+                                put(id, start.bounds(insetPx, topPx, clockWAtDown))
+                                itemObstacleEntries(visible, id).forEach { (otherKey, rect) ->
+                                    put(otherKey, rect.bounds(insetPx, topPx, clockWAtDown))
+                                }
+                            }
+                        } else emptyMap()
+                        val shortcutObstacles = if (mode == MODE_MOVE && id != null) {
+                            val padPx = with(density) { 6.dp.toPx() }
+                            val edgePx = with(density) { 10.dp.toPx() }
+                            val shortcutSizePx = (widthPx * 0.135f).coerceIn(
+                                with(density) { 30.dp.toPx() },
+                                with(density) { 52.dp.toPx() }
+                            )
+                            val shortcutBottomPx = (heightPx * 0.036f).coerceAtLeast(edgePx)
+                            val shortcutSidePx = (widthPx * 0.068f).coerceAtLeast(edgePx)
+                            listOf(
+                                RectF(
+                                    shortcutSidePx - padPx,
+                                    heightPx - shortcutBottomPx - shortcutSizePx - padPx,
+                                    shortcutSidePx + shortcutSizePx + padPx,
+                                    heightPx - shortcutBottomPx + padPx
+                                ),
+                                RectF(
+                                    widthPx - shortcutSidePx - shortcutSizePx - padPx,
+                                    heightPx - shortcutBottomPx - shortcutSizePx - padPx,
+                                    widthPx - shortcutSidePx + padPx,
+                                    heightPx - shortcutBottomPx + padPx
+                                )
+                            ).map { it.bounds(insetPx, topPx, clockWAtDown) }
+                        } else emptyList()
                         var total = Offset.Zero
-                        var applied = Offset.Zero
+                        var appliedPushDeltas = pushTargets.keys.associateWith { 0f to 0f }
                         var dragging = false
                         var transforming = false
                         var moved = false
-                        var armed = mode == MODE_RESIZE || mode == MODE_SCALE
+                        var armed = mode == MODE_RESIZE || mode == MODE_SCALE || (mode == MODE_MOVE && id != null && id == currentSelected)
                         var base = 0f to 0f
                         var zoom = 1f
                         var turn = 0f
@@ -267,7 +304,7 @@ fun EditorCanvas(
                                 armed = true
                                 dragging = true
                                 total = Offset.Zero
-                                applied = Offset.Zero
+                                appliedPushDeltas = pushTargets.keys.associateWith { 0f to 0f }
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 if (target != currentSelected) currentSelect(target)
                                 continue
@@ -312,19 +349,52 @@ fun EditorCanvas(
                             when (mode) {
                                 MODE_MOVE -> {
                                     val moving = start.bounds(insetPx - total.x, topPx - total.y, clockWidth)
-                                    val result = ItemSnapper.snap(moving, others.map { it.bounds(insetPx, topPx, clockWidth) })
+                                    val screenCenterY = (heightPx / 2f - topPx) / clockWidth
+                                    val siblingTargets = if (ItemGroups.isGroup(target)) emptyList()
+                                    else {
+                                        val ownGroup = ItemGroups.keyOf(target)
+                                        visible.filterKeys { it != target && ItemGroups.belongs(ownGroup, it) }
+                                            .values
+                                            .map { it.bounds(insetPx, topPx, clockWidth) }
+                                    }
+                                    val liveOtherGroups = pushTargets.entries
+                                        .filter { it.key != target }
+                                        .map { (key, bounds) ->
+                                            val (dx, dy) = appliedPushDeltas[key] ?: (0f to 0f)
+                                            ItemBounds(bounds.left + dx, bounds.top + dy, bounds.right + dx, bounds.bottom + dy)
+                                        }
+                                    val snapOthers = if (pushTargets.isEmpty()) others.map { it.bounds(insetPx, topPx, clockWidth) } else liveOtherGroups + siblingTargets
+                                    val result = ItemSnapper.snap(moving, snapOthers, screenCenterY, snapYToOthers = false)
                                     val newX = result.guideX != null && result.guideX != guides.guideX
                                     val newY = result.guideY != null && result.guideY != guides.guideY
                                     if (newX || newY) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     guides = result
-                                    val rawX = total.x + result.dx * clockWidth
-                                    val clampedX = if (start.width() <= clockWidth) rawX.coerceIn(insetPx - start.left, insetPx + clockWidth - start.right) else rawX
-                                    val rawY = total.y + result.dy * clockWidth
-                                    val clampedY = if (start.height() <= heightPx - insetPx - topPx) rawY.coerceIn(topPx - start.top, heightPx - insetPx - start.bottom) else rawY.coerceAtLeast(topPx - start.top)
-                                    val next = Offset(clampedX, clampedY)
-                                    val step = next - applied
-                                    applied = next
-                                    if (step != Offset.Zero) currentMove(target, step.x / clockWidth, step.y / clockWidth)
+                                    val safeTop = minOf(topPx, insetPx)
+                                    val safeBottom = heightPx - insetPx
+                                    val solvedDeltas = WidgetGrids.solvePushLayout(
+                                        activeTarget = target,
+                                        startBounds = pushTargets,
+                                        rawDx = total.x / clockWidth + result.dx,
+                                        rawDy = total.y / clockWidth + result.dy,
+                                        lastValidDeltas = appliedPushDeltas,
+                                        minX = 0f,
+                                        maxX = 1f,
+                                        minY = (safeTop - topPx) / clockWidth,
+                                        maxY = (safeBottom - topPx) / clockWidth,
+                                        fixedObstacles = shortcutObstacles
+                                    )
+                                    val steps = buildMap {
+                                        solvedDeltas.forEach { (key, next) ->
+                                            val prev = appliedPushDeltas[key] ?: (0f to 0f)
+                                            val stepX = next.first - prev.first
+                                            val stepY = next.second - prev.second
+                                            if (abs(stepX) > 1e-6f || abs(stepY) > 1e-6f) {
+                                                put(key, stepX to stepY)
+                                            }
+                                        }
+                                    }
+                                    appliedPushDeltas = solvedDeltas
+                                    if (steps.isNotEmpty()) currentMoveAll(steps)
                                 }
 
                                 MODE_RESIZE -> {
@@ -510,6 +580,16 @@ private fun snapTargets(rects: Map<String, RectF>, id: String): List<RectF> {
     val groups = rects.keys.map { ItemGroups.keyOf(it) }.distinct().filter { it != own }.mapNotNull { rectOf(rects, it) }
     if (ItemGroups.isGroup(id)) return groups
     return groups + rects.filterKeys { it != id && ItemGroups.belongs(own, it) }.values
+}
+
+private fun itemObstacleEntries(rects: Map<String, RectF>, id: String): List<Pair<String, RectF>> {
+    val ownGroup = if (ItemGroups.isGroup(id)) id else ItemGroups.keyOf(id)
+    val ownItemId = ItemGroups.itemId(ownGroup)
+    return rects.keys
+        .map { ItemGroups.keyOf(it) }
+        .distinct()
+        .filter { ItemGroups.itemId(it) != ownItemId }
+        .mapNotNull { key -> rectOf(rects, key)?.let { key to it } }
 }
 
 private fun RectF.bounds(originX: Float, originY: Float, unit: Float): ItemBounds =

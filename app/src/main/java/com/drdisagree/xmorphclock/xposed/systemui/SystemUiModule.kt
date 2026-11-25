@@ -11,6 +11,8 @@ import com.drdisagree.xmorphclock.xposed.clock.ScrimTracker
 import com.drdisagree.xmorphclock.xposed.clock.WallpaperCapture
 import com.drdisagree.xmorphclock.xposed.data.NotificationCounter
 import com.drdisagree.xmorphclock.xposed.hook.HookEnv
+import com.drdisagree.xmorphclock.xposed.hook.HookSafety
+import com.drdisagree.xmorphclock.xposed.hook.HostApplication
 import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 import com.drdisagree.xmorphclock.xposed.report.HookReporter
 import com.drdisagree.xmorphclock.xposed.signal.SignalSources
@@ -27,6 +29,10 @@ object SystemUiModule {
         started = true
         val module = HookEnv.module
         HookReporter.framework("${module.frameworkName} ${module.frameworkVersion} (API ${module.apiVersion})")
+        if (HookSafety.beginSession(HostApplication.context())) {
+            HookReporter.start()
+            return
+        }
         ModulePrefs.init(module)
         FaceImages.init(RemoteImages::load)
         FaceFont.setUserFonts(RemoteFonts::open)
@@ -35,6 +41,7 @@ object SystemUiModule {
         SignalSources.installSupported()
         StockSmartspace.install()
         RomClockGuard.install()
+        LockscreenShortcutsHook.install()
         NotificationCounter.install()
         ClockController.init()
         ClockAdapters.installSupported(ClockHost())

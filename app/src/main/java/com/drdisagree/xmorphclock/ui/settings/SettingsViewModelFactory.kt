@@ -16,6 +16,8 @@ fun settingsViewModelFactory(container: AppContainer): ViewModelProvider.Factory
             saveWeatherSettings = container.saveWeatherSettings,
             refreshWeather = container.refreshWeather,
             setWeatherLocation = container.setWeatherLocation,
+            searchWeatherCities = container.searchWeatherCities,
+            setWeatherCity = container.setWeatherCity,
             observeDepthSettings = container.observeDepthSettings,
             observeDepthStatus = container.observeDepthStatus,
             retryDepth = container.retryDepth,

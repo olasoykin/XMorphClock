@@ -20,6 +20,7 @@ import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.FaceData
 import com.drdisagree.xmorphclock.domain.model.FaceLayerType
 import com.drdisagree.xmorphclock.domain.model.FaceTile
+import com.drdisagree.xmorphclock.domain.model.WeatherCity
 import com.drdisagree.xmorphclock.domain.model.WeatherSettings
 import com.drdisagree.xmorphclock.domain.model.WeatherState
 import com.drdisagree.xmorphclock.domain.repository.FaceDataRepository
@@ -94,18 +95,28 @@ class FaceDataRepositoryImpl(
     }
 
     override suspend fun setWeatherLocation(query: String?): Boolean = withContext(Dispatchers.IO) {
-        val current = weatherStore.settings
         if (query.isNullOrBlank()) {
-            weatherStore.save(current.copy(latitude = null, longitude = null, locationName = ""))
-            permissions.grant(PermissionGranter.LOCATION)
-            WeatherScheduler.refreshNow(context)
+            setWeatherCity(null)
             return@withContext true
         }
-        val address = LocationSource(context).search(query.trim()) ?: return@withContext false
-        val name = address.locality ?: address.subAdminArea ?: address.adminArea ?: query.trim()
-        weatherStore.save(current.copy(latitude = address.latitude, longitude = address.longitude, locationName = name))
-        WeatherScheduler.refreshNow(context)
+        val city = LocationSource(context).searchCities(query.trim()).firstOrNull() ?: return@withContext false
+        setWeatherCity(city)
         true
+    }
+
+    override suspend fun searchWeatherCities(query: String): List<WeatherCity> = withContext(Dispatchers.IO) {
+        LocationSource(context).searchCities(query)
+    }
+
+    override suspend fun setWeatherCity(city: WeatherCity?) = withContext(Dispatchers.IO) {
+        val current = weatherStore.settings
+        if (city == null) {
+            weatherStore.save(current.copy(latitude = null, longitude = null, locationName = ""))
+            permissions.grant(PermissionGranter.LOCATION)
+        } else {
+            weatherStore.save(current.copy(latitude = city.latitude, longitude = city.longitude, locationName = city.name))
+        }
+        WeatherScheduler.refreshNow(context)
     }
 
     override suspend fun prepare(face: ClockFace) = withContext(Dispatchers.IO) {

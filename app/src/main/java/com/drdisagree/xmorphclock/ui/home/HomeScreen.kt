@@ -23,9 +23,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,12 +31,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -49,16 +49,18 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Badge
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,12 +69,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -91,32 +91,40 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drdisagree.xmorphclock.R
 import com.drdisagree.xmorphclock.domain.editor.CustomFaces
 import com.drdisagree.xmorphclock.domain.editor.ItemGroups
+import com.drdisagree.xmorphclock.domain.editor.LockTarget
+import com.drdisagree.xmorphclock.domain.editor.WidgetGrids
+import com.drdisagree.xmorphclock.domain.editor.WidgetZone
 import com.drdisagree.xmorphclock.domain.model.ClockFace
+import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.EditScope
 import com.drdisagree.xmorphclock.domain.model.ElementKind
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.ModuleStatus
+import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
+import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.ui.components.AppIcon
 import com.drdisagree.xmorphclock.ui.components.ClockFacePreview
+import com.drdisagree.xmorphclock.ui.components.ExpressiveButton
 import com.drdisagree.xmorphclock.ui.components.ExpressiveDialog
 import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
+import com.drdisagree.xmorphclock.ui.components.ExpressiveTonalButton
 import com.drdisagree.xmorphclock.ui.components.FitText
 import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.components.LocalFaceData
@@ -127,7 +135,6 @@ import com.drdisagree.xmorphclock.ui.components.StatusDot
 import com.drdisagree.xmorphclock.ui.components.StatusPill
 import com.drdisagree.xmorphclock.ui.components.StatusTone
 import com.drdisagree.xmorphclock.ui.components.expressivePillShape
-import com.drdisagree.xmorphclock.ui.components.fadingEdges
 import com.drdisagree.xmorphclock.ui.editor.ColorPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.ColorTarget
 import com.drdisagree.xmorphclock.ui.editor.EditorCanvas
@@ -141,39 +148,32 @@ import com.drdisagree.xmorphclock.ui.editor.IconPickerDialog
 import com.drdisagree.xmorphclock.ui.editor.elementLabel
 import com.drdisagree.xmorphclock.ui.theme.DarkPalette
 import com.drdisagree.xmorphclock.ui.theme.LocalPalette
-import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private val SheetShape = RoundedCornerShape(28.dp)
-private val THUMB_WIDTH = 84.dp
+private val CLOCK_CARD_WIDTH = 94.dp
+private val WIDGET_CARD_UNIT = 90.dp
+private val WIDGET_CARD_WIDE = 152.dp
+private val INLINE_CARD_WIDTH = 166.dp
 private val SHEET_MARGIN = 12.dp
 private val PREVIEW_SIDE_GAP = 16.dp
-private val LABEL_GAP = 8.dp
-private val HEADER_HEIGHT = 40.dp
+private val LABEL_GAP = 6.dp
 private val GRABBER_WIDTH = 36.dp
 private val GRABBER_HEIGHT = 4.dp
-private const val JUMP_ITEMS = 10
-private val HEADER_NUDGE = 6.dp
-private const val LEAD_ITEMS = 4
-private val GRABBER_TOP = 12.dp
-private val GRABBER_AREA = 28.dp
+private val GRABBER_TOP = 10.dp
+private val GRABBER_AREA = 24.dp
 private val SHEET_PEEK = 76.dp
-private val LABEL_LINE = 16.sp
-private const val EDITOR_FRACTION = 0.45f
-private const val MORPH_MS = 560
-private val FULL_BOTTOM = 84.dp
-private val DRAG_THRESHOLD = 32.dp
-private val GRID_FADE = 22.dp
-private val CHIPS_HEIGHT = 40.dp
-private val CHIPS_GAP = 10.dp
-private const val HEADER_KEY = "header:"
+private const val FACES_FRACTION = 0.44f
 private const val FACES_EXPANDED_FRACTION = 0.72f
-private val THUMB_RADIUS = 16.dp
-private val BLOCK_PADDING = 8.dp
+private const val EDITOR_FRACTION = 0.45f
+private const val MORPH_MS = 460
+private val MAXIMIZED_DOCK_HEIGHT = 68.dp
+private val DRAG_THRESHOLD = 32.dp
+private val CARD_RADIUS = 20.dp
+private val BLOCK_PADDING = 10.dp
 private val CLOCK_PADDING = 10.dp
-private val THUMB_RING = 2.5.dp
+private val CARD_RING = 2.5.dp
 internal val ThumbInk = Color(0xFF1F2227)
 private val BADGE_TOP = 10.dp
 private val BADGE_INSET = 10.dp
@@ -193,32 +193,45 @@ fun HomeScreen(
     val editorState by editor.uiState.collectAsStateWithLifecycle()
     val styleStatus by viewModel.styleStatus.collectAsStateWithLifecycle()
     val editing = state.editingStyle != null && editorState.face != null && editorState.style == state.editingStyle
+    val sheetOpen = editing || state.activeTarget != null
+
     val aspect = LocalClockGeometry.current.aspect
-    val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
     val density = LocalDensity.current
+    val screenHeight = with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val labelHeight = with(density) { LABEL_LINE.toDp() }
-    val thumbHeight = THUMB_WIDTH / aspect
-    val rowHeight = thumbHeight + LABEL_GAP + labelHeight
-    val facesHeight = GRABBER_AREA + TITLE_HEIGHT + HEADER_HEIGHT + TABS_GAP + CHIPS_GAP + CHIPS_HEIGHT + GRID_FADE * 2 + rowHeight
-    val editorHeight = screenHeight * EDITOR_FRACTION - navBottom - SHEET_MARGIN
+
+    val facesHeight = (screenHeight * FACES_FRACTION - navBottom - SHEET_MARGIN).coerceAtLeast(280.dp)
+    val facesExpandedHeight = (screenHeight * FACES_EXPANDED_FRACTION - navBottom - SHEET_MARGIN).coerceAtLeast(360.dp)
+    val editorHeight = (screenHeight * EDITOR_FRACTION - navBottom - SHEET_MARGIN).coerceAtLeast(280.dp)
+
+    var facesExpanded by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.activeTarget) {
+        if (state.activeTarget == null) facesExpanded = false
+    }
+
     val morph by animateFloatAsState(
         if (editing) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "morph"
     )
-    var facesExpanded by rememberSaveable { mutableStateOf(false) }
+    val sheetProgress by animateFloatAsState(
+        if (sheetOpen) 1f else 0f,
+        tween(MORPH_MS, easing = Emphasized),
+        label = "sheetProgress"
+    )
     val expand by animateFloatAsState(
-        if (facesExpanded && !editing) 1f else 0f,
+        if (facesExpanded && !editing && state.activeTarget != null) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "expand"
     )
-    val facesExpandedHeight = screenHeight * FACES_EXPANDED_FRACTION - navBottom - SHEET_MARGIN
+
     val imeBottom = WindowInsets.ime.getBottom(density)
     val lift = with(density) { (imeBottom - navBottom.roundToPx()).coerceAtLeast(0).toDp() }
     val keyboard by animateFloatAsState(if (imeBottom > 0 && editing) 1f else 0f, tween(KEYBOARD_MS, easing = Emphasized), label = "keyboard")
     val editSheet = lerp(editorHeight, minOf(editorHeight, KEYBOARD_SHEET), keyboard)
-    val sheetHeight = lerp(lerp(facesHeight, facesExpandedHeight, expand), editSheet, morph)
+    val targetFacesHeight = lerp(facesHeight, facesExpandedHeight, expand)
+    val activeSheetHeight = lerp(targetFacesHeight, editSheet, morph)
+
     val reveal by animateFloatAsState(if (state.preview == null) 0f else 1f, tween(320), label = "reveal")
     var playToken by remember { mutableIntStateOf(0) }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
@@ -232,11 +245,11 @@ fun HomeScreen(
     var pickingFont by rememberSaveable { mutableStateOf(false) }
     val userFonts by editor.userFonts.collectAsStateWithLifecycle()
     val fontFailed = stringResource(R.string.font_add_failed)
-    val fontContext = LocalContext.current
+    val context = LocalContext.current
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
             pickingFont = false
-            editor.addFont(it.toString()) { Toast.makeText(fontContext, fontFailed, Toast.LENGTH_SHORT).show() }
+            editor.addFont(it.toString()) { Toast.makeText(context, fontFailed, Toast.LENGTH_SHORT).show() }
         }
     }
     var addingElement by rememberSaveable { mutableStateOf(false) }
@@ -247,14 +260,13 @@ fun HomeScreen(
     var naming by remember { mutableStateOf<FacePreset?>(null) }
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var savingStyle by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
     val liveWallpaper by viewModel.liveWallpaper.collectAsStateWithLifecycle()
+
     val full by animateFloatAsState(
         if (fullscreen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "full"
     )
-
     val open by animateFloatAsState(
         if (sheetUp && fullscreen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
@@ -264,9 +276,9 @@ fun HomeScreen(
 
     val currentState by rememberUpdatedState(state)
 
-    fun openEditor() {
+    fun openEditorFor(itemId: Int? = null) {
         currentState.clockPreset?.let { preset ->
-            editor.open(viewModel.editTarget())
+            editor.open(viewModel.editTarget(itemId))
             viewModel.onEdit(preset.style)
         }
     }
@@ -274,7 +286,13 @@ fun HomeScreen(
     LaunchedEffect(viewModel) {
         viewModel.editEvents.collect {
             fullscreen = false
-            openEditor()
+            openEditorFor()
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.noticeEvents.collect { messageRes ->
+            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -291,19 +309,27 @@ fun HomeScreen(
         }
     }
 
-    BackHandler(enabled = facesExpanded && !editing) { facesExpanded = false }
-
-    BackHandler(enabled = fullscreen && !editing) { fullscreen = false }
+    BackHandler(enabled = state.activeTarget != null && !editing) {
+        if (facesExpanded) facesExpanded = false
+        else viewModel.onTargetSelected(null)
+    }
 
     var previewHeight by remember { mutableStateOf(0.dp) }
     var previewWidth by remember { mutableStateOf(0.dp) }
-    val fitScale = if (previewHeight > 0.dp && previewWidth > 0.dp) ((previewWidth - PREVIEW_SIDE_GAP * 2) / (previewHeight * aspect)).coerceIn(0.2f, 1f) else 1f
-    val reserved = FULL_BOTTOM - 16.dp
-    val homeScale = if (previewHeight > 0.dp) ((previewHeight - (SHEET_MARGIN + facesHeight - reserved)) / previewHeight).coerceIn(0.2f, 1f) else 1f
-    val editScale = if (previewHeight > 0.dp) ((previewHeight - (SHEET_MARGIN + editSheet + lift - reserved)) / previewHeight).coerceIn(0.2f, 1f) else 1f
+    val fitScale = if (previewHeight > 0.dp && previewWidth > 0.dp) {
+        ((previewWidth - PREVIEW_SIDE_GAP * 2) / (previewHeight * aspect)).coerceIn(0.2f, 1f)
+    } else 1f
+    val reservedDock = MAXIMIZED_DOCK_HEIGHT - 12.dp
+    val homeScale = if (previewHeight > 0.dp) {
+        ((previewHeight - (SHEET_MARGIN + facesHeight - reservedDock)) / previewHeight).coerceIn(0.25f, fitScale)
+    } else fitScale
+    val editScale = if (previewHeight > 0.dp) {
+        ((previewHeight - (SHEET_MARGIN + editSheet + lift - reservedDock)) / previewHeight).coerceIn(0.25f, fitScale)
+    } else fitScale
     val previewScale = {
-        val sheetScale = homeScale + (editScale - homeScale) * morph
-        minOf(sheetScale + (1f - sheetScale) * full, fitScale)
+        val openScale = homeScale + (editScale - homeScale) * morph
+        val sheetAdjusted = fitScale + (openScale - fitScale) * sheetProgress
+        minOf(sheetAdjusted + (1f - sheetAdjusted) * full, fitScale)
     }
 
     val styleName = state.clockPreset?.face?.name ?: stringResource(R.string.menu_style_name)
@@ -318,7 +344,7 @@ fun HomeScreen(
                 Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
-                    .padding(top = 68.dp, bottom = navBottom + FULL_BOTTOM)
+                    .padding(top = 66.dp, bottom = navBottom + MAXIMIZED_DOCK_HEIGHT)
                     .graphicsLayer { alpha = reveal },
                 contentAlignment = Alignment.TopCenter
             ) {
@@ -330,7 +356,7 @@ fun HomeScreen(
                 }
                 Crossfade(
                     targetState = editing,
-                    animationSpec = tween(320),
+                    animationSpec = tween(300),
                     modifier = Modifier
                         .requiredSize(available * aspect * fitScale, available * fitScale)
                         .graphicsLayer {
@@ -352,8 +378,8 @@ fun HomeScreen(
             AnimatedContent(
                 targetState = Pair(editorState.grouping != null, editing),
                 transitionSpec = {
-                    (fadeIn(tween(260, delayMillis = 80)) + slideInVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 }) togetherWith
-                        (fadeOut(tween(160)) + slideOutVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 })
+                    (fadeIn(tween(240, delayMillis = 60)) + slideInVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 }) togetherWith
+                        (fadeOut(tween(150)) + slideOutVertically(tween(MORPH_MS, easing = Emphasized)) { -it / 2 })
                 },
                 label = "topBar"
             ) { (_, edit) ->
@@ -381,12 +407,12 @@ fun HomeScreen(
                     TopBar(
                         status = state.moduleStatus,
                         previewOnly = previewOnly,
-                        fullscreen = fullscreen,
+                        selecting = state.activeTarget != null,
                         unsaved = styleStatus.changed,
                         menuOpen = menuOpen,
                         onDismissMenu = { menuOpen = false },
                         onOpenMenu = { menuOpen = true },
-                        onToggleFullscreen = { fullscreen = !fullscreen },
+                        onDoneSelection = { viewModel.onTargetSelected(null) },
                         onOpenStatus = onOpenStatus,
                         menuContent = {
                             val updatable = styleStatus.presetStyle
@@ -435,33 +461,35 @@ fun HomeScreen(
                 }
             }
 
-            if (morph < 1f && full < 1f && previewHeight > 0.dp && previewWidth > 0.dp) {
+            if (sheetOpen && morph < 1f && full < 1f && previewHeight > 0.dp && previewWidth > 0.dp) {
                 var barSize by remember { mutableStateOf(IntSize.Zero) }
                 val previewCardWidth = previewHeight * previewScale() * aspect
                 val gutter = ((previewWidth - previewCardWidth) / 2f).coerceAtLeast(0.dp)
                 val maxBarWidth = (gutter - MODE_TABS_GAP * 2).coerceIn(MODE_TABS_MIN_WIDTH, MODE_TABS_MAX_WIDTH)
-                PreviewModeTabs(
-                    mode = state.previewMode,
-                    onModeChange = viewModel::onPreviewModeChange,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(top = 68.dp)
-                        .offset {
-                            val scaledHeight = previewHeight.toPx() * previewScale()
-                            val scaledWidth = scaledHeight * aspect
-                            val previewRight = previewWidth.toPx() / 2f + scaledWidth / 2f
-                            val availableGutter = (previewWidth.toPx() - previewRight).coerceAtLeast(0f)
-                            val x = (previewRight + (availableGutter - barSize.width) / 2f)
-                                .roundToInt()
-                                .coerceIn(0, (previewWidth.toPx() - barSize.width - MODE_TABS_GAP.toPx()).roundToInt().coerceAtLeast(0))
-                            val y = (scaledHeight - barSize.height).roundToInt().coerceAtLeast(0)
-                            IntOffset(x, y)
-                        }
-                        .onSizeChanged { barSize = it }
-                        .width(maxBarWidth)
-                        .graphicsLayer { alpha = reveal * (1f - morph) * (1f - expand) * (1f - full) }
-                )
+                if (gutter >= MODE_TABS_MIN_WIDTH + MODE_TABS_GAP) {
+                    VerticalPreviewModeTabs(
+                        mode = state.previewMode,
+                        onModeChange = viewModel::onPreviewModeChange,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .statusBarsPadding()
+                            .padding(top = 66.dp)
+                            .offset {
+                                val scaledHeight = previewHeight.toPx() * previewScale()
+                                val scaledWidth = scaledHeight * aspect
+                                val previewRight = previewWidth.toPx() / 2f + scaledWidth / 2f
+                                val availableGutter = (previewWidth.toPx() - previewRight).coerceAtLeast(0f)
+                                val x = (previewRight + (availableGutter - barSize.width) / 2f)
+                                    .roundToInt()
+                                    .coerceIn(0, (previewWidth.toPx() - barSize.width - MODE_TABS_GAP.toPx()).roundToInt().coerceAtLeast(0))
+                                val y = (scaledHeight - barSize.height).roundToInt().coerceAtLeast(0)
+                                IntOffset(x, y)
+                            }
+                            .onSizeChanged { barSize = it }
+                            .width(maxBarWidth)
+                            .graphicsLayer { alpha = reveal * sheetProgress * (1f - morph) * (1f - expand) * (1f - full) }
+                    )
+                }
             }
 
             AnimatedVisibility(
@@ -471,7 +499,7 @@ fun HomeScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
-                    .padding(top = 68.dp + BADGE_TOP)
+                    .padding(top = 66.dp + BADGE_TOP)
                     .offset {
                         val half = previewHeight.toPx() * aspect * previewScale() / 2f
                         IntOffset((half - BADGE_INSET.toPx() - LIVE_BADGE_SIZE.toPx() / 2f).roundToInt(), 0)
@@ -480,61 +508,82 @@ fun HomeScreen(
                 LiveWallpaperBadge(onClick = { liveInfo = true })
             }
 
-            Surface(
-                shape = SheetShape,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 3.dp,
+            AnimatedVisibility(
+                visible = !sheetOpen && state.preview != null,
+                enter = fadeIn(tween(280, delayMillis = 80)) + slideInVertically(tween(360, easing = Emphasized)) { it / 2 },
+                exit = fadeOut(tween(180)) + slideOutVertically(tween(240, easing = Emphasized)) { it / 2 },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(start = 12.dp, end = 12.dp, bottom = SHEET_MARGIN)
-                    .fillMaxWidth()
-                    .height(sheetHeight)
-                    .offset { IntOffset(0, -lift.roundToPx()) }
-                    .graphicsLayer {
-                        alpha = reveal * (1f - full * (1f - morph))
-                        val hidden = full * (sheetHeight + navBottom + SHEET_MARGIN).toPx()
-                        val peeking = full * (1f - open) * (sheetHeight - SHEET_PEEK + SHEET_MARGIN).toPx().coerceAtLeast(0f)
-                        translationY = hidden + (peeking - hidden) * morph
-                    }
+                    .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
-                AnimatedContent(
-                    targetState = editing,
-                    transitionSpec = {
-                        fadeIn(tween(260, delayMillis = 160)) togetherWith fadeOut(tween(140))
-                    },
-                    contentAlignment = Alignment.TopCenter,
-                    modifier = Modifier.fillMaxSize(),
-                    label = "sheetContent"
-                ) { edit ->
-                    if (edit) {
-                        EditorPanel(
-                            state = editorState,
-                            viewModel = editor,
-                            onPlayChange = { playToken++ },
-                            onPickColor = {
-                                colorTarget = it
-                                pickingColor = it
-                            },
-                            onPickIcon = { pickingIcon = true },
-                            onPickFont = { pickingFont = true },
-                            modifier = Modifier.fillMaxSize(),
-                            sheetHandle = fullscreen,
-                            onSheetDrag = { sheetUp = it },
-                            onSheetTap = { sheetUp = !sheetUp }
-                        )
-                    } else {
-                        FacesContent(
-                            state = state,
-                            expanded = facesExpanded,
-                            onExpandedChange = { facesExpanded = it },
-                            onTabChange = viewModel::onTabChange,
-                            onFaceSelected = viewModel::onFaceSelected,
-                            onAdd = { addingElement = true },
-                            onLongPress = { actionsFor = it },
-                            onFullscreen = { fullscreen = true },
-                            onEdit = ::openEditor
-                        )
+                HorizontalPreviewModeTabs(
+                    mode = state.previewMode,
+                    onModeChange = viewModel::onPreviewModeChange,
+                    modifier = Modifier.widthIn(max = 320.dp)
+                )
+            }
+
+            if (sheetProgress > 0.01f) {
+                Surface(
+                    shape = SheetShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 3.dp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(start = 12.dp, end = 12.dp, bottom = SHEET_MARGIN)
+                        .fillMaxWidth()
+                        .height(activeSheetHeight)
+                        .offset { IntOffset(0, -lift.roundToPx()) }
+                        .graphicsLayer {
+                            alpha = reveal * sheetProgress * (1f - full * (1f - morph))
+                            val closedOffset = (1f - sheetProgress) * (activeSheetHeight + navBottom + SHEET_MARGIN).toPx()
+                            val hidden = full * (activeSheetHeight + navBottom + SHEET_MARGIN).toPx()
+                            val peeking = full * (1f - open) * (activeSheetHeight - SHEET_PEEK + SHEET_MARGIN).toPx().coerceAtLeast(0f)
+                            translationY = closedOffset + hidden + (peeking - hidden) * morph
+                        }
+                ) {
+                    AnimatedContent(
+                        targetState = editing,
+                        transitionSpec = {
+                            fadeIn(tween(240, delayMillis = 120)) togetherWith fadeOut(tween(140))
+                        },
+                        contentAlignment = Alignment.TopCenter,
+                        modifier = Modifier.fillMaxSize(),
+                        label = "sheetContent"
+                    ) { edit ->
+                        if (edit) {
+                            EditorPanel(
+                                state = editorState,
+                                viewModel = editor,
+                                onPlayChange = { playToken++ },
+                                onPickColor = {
+                                    colorTarget = it
+                                    pickingColor = it
+                                },
+                                onPickIcon = { pickingIcon = true },
+                                onPickFont = { pickingFont = true },
+                                modifier = Modifier.fillMaxSize(),
+                                sheetHandle = fullscreen,
+                                onSheetDrag = { sheetUp = it },
+                                onSheetTap = { sheetUp = !sheetUp }
+                            )
+                        } else {
+                            TargetCustomizationSheet(
+                                state = state,
+                                expanded = facesExpanded,
+                                onExpandedChange = { facesExpanded = it },
+                                onDismissSheet = { viewModel.onTargetSelected(null) },
+                                onFaceSelected = viewModel::onFaceSelected,
+                                onRemoveWidget = viewModel::onRemoveWidget,
+                                onAdd = { addingElement = true },
+                                onLongPress = { actionsFor = it },
+                                onEditItem = ::openEditorFor,
+                                onShortcutSlotSelected = viewModel::onShortcutSlotSelected,
+                                onShortcutSelected = viewModel::onShortcutSelected
+                            )
+                        }
                     }
                 }
             }
@@ -635,30 +684,41 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
     val large by animateFloatAsState(if (showLarge) 1f else 0f, spec, label = "large")
     val sleep by animateFloatAsState(if (state.previewMode == PreviewMode.AOD) 1f else 0f, spec, label = "sleep")
     var extents by remember { mutableStateOf(emptyMap<String, RectF>()) }
+    val gridIds = remember(state.gridWidgets) { state.gridWidgets.mapTo(HashSet()) { it.id } }
+    val inlineIds = remember(state.inlineWidgets) { state.inlineWidgets.mapTo(HashSet()) { it.id } }
+
     LockscreenPreview(
         face = state.preview,
         modifier = Modifier.fillMaxSize(),
         largeProgress = { large },
         sleepProgress = { sleep },
         onExtents = { extents = it },
+        animateChanges = !state.dragging,
         overlay = {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val frame = geometry.frame(large)
                 ItemOverlay(
                     extents = extents,
                     composition = state.composition,
-                    selected = state.selectedItem,
-                    focused = state.focusedLayer,
+                    gridWidgetIds = gridIds,
+                    inlineWidgetIds = inlineIds,
+                    activeTarget = state.activeTarget,
+                    activeShortcutSlot = state.activeShortcutSlot,
+                    shortcutLeft = state.shortcutLeft,
+                    shortcutRight = state.shortcutRight,
+                    isAod = state.previewMode == PreviewMode.AOD,
                     unit = constraints.maxWidth * frame.width,
-                    frameTop = constraints.maxHeight * frame.top,
-                    onSelect = viewModel::onItemSelected,
-                    onFocus = viewModel::onLayerFocused,
                     frameLeft = constraints.maxWidth * frame.left,
+                    frameTop = constraints.maxHeight * frame.top,
+                    width = constraints.maxWidth.toFloat(),
                     height = constraints.maxHeight.toFloat(),
-                    onMeasured = { bounds, maxY -> viewModel.onItemsMeasured(itemState, bounds, maxY) },
-                    singles = state.composition.items.filter { item ->
-                        !item.clock && state.faceOf(item.style)?.let { it.category == CustomFaces.ELEMENT_CATEGORY && it.layers.size == 1 } == true
-                    }.mapTo(HashSet()) { it.id }
+                    onSelectTarget = viewModel::onTargetSelected,
+                    onDrag = { deltas, gridDocked, inlineDocked ->
+                        viewModel.onTargetsDrag(itemState, deltas, gridDocked, inlineDocked)
+                    },
+                    onDragEnd = viewModel::onTargetDragEnd,
+                    onToggleWidgetsPosition = viewModel::onToggleWidgetsPosition,
+                    onMeasured = { bounds, maxY -> viewModel.onItemsMeasured(itemState, bounds, maxY) }
                 )
             }
         }
@@ -666,7 +726,71 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
 }
 
 @Composable
-private fun PreviewModeTabs(
+private fun HorizontalPreviewModeTabs(
+    mode: PreviewMode,
+    onModeChange: (PreviewMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PreviewMode.entries.forEach { entry ->
+                val isSelected = entry == mode
+                val interaction = remember { MutableInteractionSource() }
+                val shape = expressivePillShape(interaction, restCorner = 22.dp, pressedCorner = 12.dp)
+                val containerColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                    tween(220),
+                    label = "hModeContainer"
+                )
+                val contentColor by animateColorAsState(
+                    if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tween(220),
+                    label = "hModeContent"
+                )
+                Surface(
+                    onClick = { onModeChange(entry) },
+                    shape = shape,
+                    color = containerColor,
+                    contentColor = contentColor,
+                    interactionSource = interaction,
+                    modifier = Modifier
+                        .weight(1f)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .semantics {
+                            selected = isSelected
+                            role = Role.Tab
+                        }
+                        .testTag("preview_mode_${entry.name.lowercase()}")
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        FitText(
+                            text = stringResource(entry.label),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerticalPreviewModeTabs(
     mode: PreviewMode,
     onModeChange: (PreviewMode) -> Unit,
     modifier: Modifier = Modifier
@@ -690,13 +814,13 @@ private fun PreviewModeTabs(
                 val shape = expressivePillShape(interaction, restCorner = 20.dp, pressedCorner = 12.dp)
                 val containerColor by animateColorAsState(
                     if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-                    tween(240),
-                    label = "modeContainer"
+                    tween(220),
+                    label = "vModeContainer"
                 )
                 val contentColor by animateColorAsState(
                     if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    tween(240),
-                    label = "modeContent"
+                    tween(220),
+                    label = "vModeContent"
                 )
                 Surface(
                     onClick = { onModeChange(entry) },
@@ -706,7 +830,7 @@ private fun PreviewModeTabs(
                     interactionSource = interaction,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .defaultMinSize(minWidth = 60.dp, minHeight = 48.dp)
+                        .defaultMinSize(minWidth = 64.dp, minHeight = 48.dp)
                         .semantics {
                             selected = isSelected
                             role = Role.Tab
@@ -714,7 +838,7 @@ private fun PreviewModeTabs(
                         .testTag("preview_mode_${entry.name.lowercase()}")
                 ) {
                     Box(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         FitText(
@@ -744,6 +868,7 @@ private fun EditPreview(state: EditorUiState, editor: EditorViewModel, playToken
         playToken = playToken,
         onSelect = editor::select,
         onMove = editor::move,
+        onMoveAll = editor::moveAll,
         onResizeStart = editor::axes,
         onResize = editor::resize,
         onTransformStart = editor::transformBase,
@@ -765,12 +890,12 @@ private fun EditPreview(state: EditorUiState, editor: EditorViewModel, playToken
 private fun TopBar(
     status: ModuleStatus,
     previewOnly: Boolean,
-    fullscreen: Boolean,
+    selecting: Boolean,
     unsaved: Boolean,
     menuOpen: Boolean,
     onDismissMenu: () -> Unit,
     onOpenMenu: () -> Unit,
-    onToggleFullscreen: () -> Unit,
+    onDoneSelection: () -> Unit,
     onOpenStatus: () -> Unit,
     menuContent: @Composable () -> Unit
 ) {
@@ -786,43 +911,56 @@ private fun TopBar(
             stringResource(R.string.app_name),
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        val showPreview = previewOnly && status != ModuleStatus.ACTIVE
-        StatusPill(
-            text = stringResource(
-                when {
-                    showPreview -> R.string.module_preview
-                    status == ModuleStatus.ACTIVE -> R.string.module_active
-                    status == ModuleStatus.ATTENTION -> R.string.module_attention
-                    else -> R.string.module_inactive
-                }
-            ),
-            tone = when {
-                showPreview -> StatusTone.WARNING
-                status == ModuleStatus.ACTIVE -> StatusTone.OK
-                status == ModuleStatus.ATTENTION -> StatusTone.WARNING
-                else -> StatusTone.ERROR
-            },
-            onClick = onOpenStatus
-        )
         AnimatedVisibility(
-            visible = fullscreen,
-            enter = fadeIn(tween(220)) + scaleIn(tween(260, easing = Emphasized), initialScale = 0.8f),
-            exit = fadeOut(tween(160)) + scaleOut(tween(200), targetScale = 0.8f)
+            visible = !selecting,
+            enter = fadeIn(tween(200)) + scaleIn(tween(240, easing = Emphasized), initialScale = 0.88f),
+            exit = fadeOut(tween(150)) + scaleOut(tween(180), targetScale = 0.88f)
         ) {
-            ExpressiveIconButton(
-                icon = R.drawable.ic_fullscreen_exit,
-                onClick = onToggleFullscreen,
-                description = stringResource(R.string.action_exit_fullscreen)
+            val showPreview = previewOnly && status != ModuleStatus.ACTIVE
+            StatusPill(
+                text = stringResource(
+                    when {
+                        showPreview -> R.string.module_preview
+                        status == ModuleStatus.ACTIVE -> R.string.module_active
+                        status == ModuleStatus.ATTENTION -> R.string.module_attention
+                        else -> R.string.module_inactive
+                    }
+                ),
+                tone = when {
+                    showPreview -> StatusTone.WARNING
+                    status == ModuleStatus.ACTIVE -> StatusTone.OK
+                    status == ModuleStatus.ATTENTION -> StatusTone.WARNING
+                    else -> StatusTone.ERROR
+                },
+                onClick = onOpenStatus
             )
+        }
+        AnimatedVisibility(
+            visible = selecting,
+            enter = fadeIn(tween(200)) + scaleIn(tween(240, easing = Emphasized), initialScale = 0.88f),
+            exit = fadeOut(tween(150)) + scaleOut(tween(180), targetScale = 0.88f)
+        ) {
+            ExpressiveButton(
+                onClick = onDoneSelection,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier.testTag("home_done_button")
+            ) {
+                AppIcon(R.drawable.ic_check, tint = MaterialTheme.colorScheme.onPrimary, size = 18.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.action_done), style = MaterialTheme.typography.labelLarge)
+            }
         }
         val dot by animateFloatAsState(if (unsaved) 1f else 0f, tween(260, easing = Emphasized), label = "unsavedDot")
         Box {
             ExpressiveIconButton(
                 icon = R.drawable.ic_more,
                 onClick = onOpenMenu,
-                description = stringResource(R.string.action_more)
+                description = stringResource(R.string.action_more),
+                modifier = Modifier.testTag("home_more_button")
             )
             StatusDot(
                 MaterialTheme.colorScheme.primary,
@@ -849,20 +987,23 @@ private fun TopBar(
 }
 
 @Composable
-private fun FacesContent(
+private fun TargetCustomizationSheet(
     state: HomeUiState,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    onTabChange: (FaceTab) -> Unit,
+    onDismissSheet: () -> Unit,
     onFaceSelected: (Int) -> Unit,
+    onRemoveWidget: (Int) -> Unit,
     onAdd: () -> Unit,
     onLongPress: (FacePreset) -> Unit,
-    onEdit: () -> Unit,
-    onFullscreen: () -> Unit
+    onEditItem: (Int?) -> Unit,
+    onShortcutSlotSelected: (ShortcutSlot) -> Unit,
+    onShortcutSelected: (ShortcutSlot, SystemShortcut) -> Unit
 ) {
+    val target = state.activeTarget ?: return
     val density = LocalDensity.current
     val threshold = with(density) { DRAG_THRESHOLD.toPx() }
-    val canEdit = state.clockPreset != null
+
     Column(Modifier.fillMaxSize()) {
         Column(
             Modifier
@@ -872,8 +1013,11 @@ private fun FacesContent(
                     detectVerticalDragGestures(
                         onDragStart = { travel = 0f },
                         onDragEnd = {
-                            if (travel < -threshold) onExpandedChange(true)
-                            if (travel > threshold) onExpandedChange(false)
+                            when {
+                                travel < -threshold -> onExpandedChange(true)
+                                travel > threshold && expanded -> onExpandedChange(false)
+                                travel > threshold && !expanded -> onDismissSheet()
+                            }
                         }
                     ) { change, amount ->
                         change.consume()
@@ -887,6 +1031,7 @@ private fun FacesContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(GRABBER_AREA)
+                    .testTag("sheet_grabber")
             ) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Box(
@@ -894,182 +1039,555 @@ private fun FacesContent(
                             .padding(top = GRABBER_TOP)
                             .size(GRABBER_WIDTH, GRABBER_HEIGHT)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.42f))
                     )
                 }
             }
-            Row(
-                Modifier
-                    .padding(start = 20.dp, end = 16.dp)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Column(Modifier.weight(1f)) {
-                    AnimatedContent(
-                        targetState = state.tab,
-                        transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(140)) },
-                        contentAlignment = Alignment.CenterStart,
-                        modifier = Modifier.height(TITLE_HEIGHT),
-                        label = "tabTitle"
-                    ) { tab ->
-                        Text(
-                            stringResource(tabLabel(tab)),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    FaceTabs(
-                        selected = state.tab,
-                        onSelect = onTabChange,
-                        height = HEADER_HEIGHT,
-                        modifier = Modifier
-                            .padding(top = TABS_GAP)
-                            .width(KIND_TABS_WIDTH)
+
+            AnimatedContent(
+                targetState = target,
+                transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
+                label = "sheetHeader"
+            ) { current ->
+                when (current) {
+                    LockTarget.CLOCK -> ClockSheetHeader(
+                        presetName = state.clockPreset?.face?.name,
+                        canEdit = state.clockPreset != null,
+                        onFontAndColor = { onEditItem(state.composition.clockItem?.id) }
+                    )
+
+                    LockTarget.WIDGET_GRID -> WidgetSheetHeader(
+                        title = stringResource(R.string.sheet_widgets_1x4),
+                        usage = stringResource(R.string.slots_used_grid, state.gridCellsUsed),
+                        hasItems = state.gridWidgets.isNotEmpty(),
+                        onAddCustom = onAdd,
+                        onEditFirst = { onEditItem(state.selectedItem ?: state.gridWidgets.firstOrNull()?.id) }
+                    )
+
+                    LockTarget.INLINE_GRID -> WidgetSheetHeader(
+                        title = stringResource(R.string.sheet_inline_1x2),
+                        usage = stringResource(R.string.slots_used_inline, state.inlineCount),
+                        hasItems = state.inlineWidgets.isNotEmpty(),
+                        onAddCustom = onAdd,
+                        onEditFirst = { onEditItem(state.selectedItem ?: state.inlineWidgets.firstOrNull()?.id) }
+                    )
+
+                    LockTarget.SHORTCUTS -> ShortcutsSheetHeader(
+                        activeSlot = state.activeShortcutSlot,
+                        leftShortcut = state.shortcutLeft,
+                        rightShortcut = state.shortcutRight,
+                        onSlotSelected = onShortcutSlotSelected
                     )
                 }
-                PreviewActions(
-                    height = HEADER_HEIGHT,
-                    canEdit = canEdit,
-                    onAdd = onAdd,
-                    onFullscreen = onFullscreen,
-                    onEdit = onEdit
+            }
+        }
+
+        AnimatedContent(
+            targetState = target,
+            transitionSpec = { fadeIn(tween(220, delayMillis = 50)) togetherWith fadeOut(tween(140)) },
+            modifier = Modifier.weight(1f),
+            label = "sheetBody"
+        ) { current ->
+            when (current) {
+                LockTarget.CLOCK -> ClockCarouselsBody(
+                    sections = remember(state.faces) { state.clockCarousels() },
+                    previews = state.presetPreviews,
+                    checked = state::isChecked,
+                    onSelect = onFaceSelected,
+                    onLongPress = onLongPress
+                )
+
+                LockTarget.WIDGET_GRID -> WidgetCarouselsBody(
+                    zone = WidgetZone.GRID_1X4,
+                    placedItems = state.gridWidgets,
+                    sections = remember(state.faces) { state.widgetCarousels(WidgetZone.GRID_1X4) },
+                    faceOf = state::faceOf,
+                    checked = state::isChecked,
+                    onSelectPreset = onFaceSelected,
+                    onEditPlaced = onEditItem,
+                    onRemovePlaced = onRemoveWidget
+                )
+
+                LockTarget.INLINE_GRID -> WidgetCarouselsBody(
+                    zone = WidgetZone.INLINE_1X2,
+                    placedItems = state.inlineWidgets,
+                    sections = remember(state.faces) { state.widgetCarousels(WidgetZone.INLINE_1X2) },
+                    faceOf = state::faceOf,
+                    checked = state::isChecked,
+                    onSelectPreset = onFaceSelected,
+                    onEditPlaced = onEditItem,
+                    onRemovePlaced = onRemoveWidget
+                )
+
+                LockTarget.SHORTCUTS -> {
+                    val currentSelected = if (state.activeShortcutSlot == ShortcutSlot.LEFT) {
+                        state.shortcutLeft
+                    } else {
+                        state.shortcutRight
+                    }
+                    ShortcutsSheetBody(
+                        currentShortcut = currentSelected,
+                        onSelect = { shortcut -> onShortcutSelected(state.activeShortcutSlot, shortcut) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClockSheetHeader(
+    presetName: String?,
+    canEdit: Boolean,
+    onFontAndColor: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 16.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = stringResource(R.string.sheet_clock_style),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!presetName.isNullOrBlank()) {
+                Text(
+                    text = presetName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
-        AnimatedContent(
-            targetState = state.tab,
-            transitionSpec = { fadeIn(tween(240, delayMillis = 60)) togetherWith fadeOut(tween(140)) },
-            modifier = Modifier.weight(1f),
-            label = "tabGrid"
-        ) { tab ->
-            FaceGrid(
-                tab = tab,
-                faces = state.facesOf(tab).filterNot { it.face.category == CustomFaces.ELEMENT_CATEGORY },
-                previews = state.presetPreviews,
-                checked = state::isChecked,
-                onSelect = onFaceSelected,
-                onLongPress = onLongPress.takeIf { tab != FaceTab.WIDGETS }
+        ExpressiveTonalButton(
+            onClick = onFontAndColor,
+            enabled = canEdit,
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.testTag("clock_font_color_button")
+        ) {
+            AppIcon(R.drawable.ic_edit, tint = MaterialTheme.colorScheme.onSecondaryContainer, size = 18.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.action_font_color),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
 @Composable
-private fun FaceGrid(
-    tab: FaceTab,
-    faces: List<FacePreset>,
+private fun WidgetSheetHeader(
+    title: String,
+    usage: String,
+    hasItems: Boolean,
+    onAddCustom: () -> Unit,
+    onEditFirst: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 16.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Text(
+                    text = usage,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+        ExpressiveTonalButton(
+            onClick = onAddCustom,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.testTag("widget_add_custom_button")
+        ) {
+            AppIcon(R.drawable.ic_plus, tint = MaterialTheme.colorScheme.onSecondaryContainer, size = 18.dp)
+            Spacer(Modifier.width(6.dp))
+            Text(stringResource(R.string.action_custom), style = MaterialTheme.typography.labelLarge)
+        }
+        if (hasItems) {
+            ExpressiveIconButton(
+                icon = R.drawable.ic_edit,
+                onClick = onEditFirst,
+                size = 44.dp,
+                description = stringResource(R.string.action_edit_selected),
+                filled = true,
+                modifier = Modifier.testTag("widget_edit_button")
+            )
+        }
+    }
+}
+
+@Composable
+private fun ShortcutsSheetHeader(
+    activeSlot: ShortcutSlot,
+    leftShortcut: SystemShortcut,
+    rightShortcut: SystemShortcut,
+    onSlotSelected: (ShortcutSlot) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.sheet_shortcuts),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Surface(
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    Triple(ShortcutSlot.LEFT, R.string.shortcut_slot_left, leftShortcut),
+                    Triple(ShortcutSlot.RIGHT, R.string.shortcut_slot_right, rightShortcut)
+                ).forEach { (slot, labelRes, shortcut) ->
+                    val isSelected = activeSlot == slot
+                    val interaction = remember { MutableInteractionSource() }
+                    val shape = expressivePillShape(interaction, restCorner = 24.dp, pressedCorner = 14.dp)
+                    val containerColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                        tween(200),
+                        label = "shortcutTabBg"
+                    )
+                    val contentColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tween(200),
+                        label = "shortcutTabFg"
+                    )
+                    Surface(
+                        onClick = { onSlotSelected(slot) },
+                        shape = shape,
+                        color = containerColor,
+                        contentColor = contentColor,
+                        interactionSource = interaction,
+                        modifier = Modifier
+                            .weight(1f)
+                            .defaultMinSize(minHeight = 48.dp)
+                            .semantics {
+                                selected = isSelected
+                                role = Role.Tab
+                            }
+                            .testTag("shortcut_slot_tab_${slot.name.lowercase()}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AppIcon(
+                                icon = shortcut.iconRes,
+                                tint = contentColor,
+                                size = 18.dp
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(labelRes),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = contentColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(shortcut.labelRes),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = contentColor.copy(alpha = 0.78f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortcutsSheetBody(
+    currentShortcut: SystemShortcut,
+    onSelect: (SystemShortcut) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(SystemShortcut.entries, key = { it.id }) { shortcut ->
+            val isSelected = shortcut == currentShortcut
+            val interaction = remember { MutableInteractionSource() }
+            val shape = expressivePillShape(interaction, restCorner = 22.dp, pressedCorner = 14.dp)
+            val containerColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                tween(200),
+                label = "shortcutRowContainer"
+            )
+            val contentColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                tween(200),
+                label = "shortcutRowContent"
+            )
+            val iconCircleColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+                tween(200),
+                label = "shortcutIconBg"
+            )
+            val iconTint by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                tween(200),
+                label = "shortcutIconFg"
+            )
+            Surface(
+                onClick = { onSelect(shortcut) },
+                shape = shape,
+                color = containerColor,
+                contentColor = contentColor,
+                interactionSource = interaction,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .semantics {
+                        selected = isSelected
+                        role = Role.RadioButton
+                    }
+                    .testTag("shortcut_option_${shortcut.id}")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(iconCircleColor),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AppIcon(
+                            icon = shortcut.iconRes,
+                            tint = iconTint,
+                            size = 20.dp
+                        )
+                    }
+                    Text(
+                        text = stringResource(shortcut.labelRes),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = contentColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isSelected) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AppIcon(
+                                icon = R.drawable.ic_check,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                size = 14.dp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ClockCarouselsBody(
+    sections: List<FaceSection>,
     previews: Map<Int, ClockFace>,
     checked: (FacePreset) -> Boolean,
     onSelect: (Int) -> Unit,
-    onLongPress: ((FacePreset) -> Unit)?
+    onLongPress: (FacePreset) -> Unit
 ) {
     CompositionLocalProvider(LocalFaceData provides LocalSampleFaceData.current) {
-        val density = LocalDensity.current
-        val block = tab == FaceTab.WIDGETS
-        val sectioned = tab != FaceTab.MINE
-        val grid = rememberLazyGridState()
-        val scope = rememberCoroutineScope()
-        val sections = remember(faces) { sectionsOf(faces) }
-        val currentSections by rememberUpdatedState(sections)
-        var scrolled by remember { mutableStateOf(false) }
-        val appliedIndex = sections.firstNotNullOfOrNull { section ->
-            section.faces.indexOfFirst(checked)
-                .takeIf { it >= 0 }
-                ?.let { section.headerIndex + 1 + it }
-        } ?: -1
-        LaunchedEffect(appliedIndex) {
-            if (!scrolled && appliedIndex >= 0) {
-                grid.scrollToItem(appliedIndex)
-                scrolled = true
-            }
-        }
-        val activeSection by remember {
-            derivedStateOf {
-                val list = currentSections
-                val coverage = FloatArray(list.size)
-                val rows = HashSet<Long>()
-                val info = grid.layoutInfo
-                val start = info.viewportStartOffset
-                val end = info.viewportEndOffset
-                info.visibleItemsInfo.forEach { item ->
-                    val section = list.indexOfLast { it.headerIndex <= item.index }
-                    if (section < 0 || !rows.add(section.toLong() shl ROW_SHIFT or item.offset.y.toLong().and(ROW_MASK))) return@forEach
-                    val top = item.offset.y.coerceAtLeast(start)
-                    val bottom = (item.offset.y + item.size.height).coerceAtMost(end)
-                    if (bottom > top) coverage[section] += (bottom - top).toFloat()
-                }
-                coverage.indices.maxByOrNull { coverage[it] }?.takeIf { coverage[it] > 0f } ?: 0
-            }
-        }
-        var pendingSection by remember { mutableStateOf<Int?>(null) }
-        LaunchedEffect(grid) {
-            grid.interactionSource.interactions.collect { interaction ->
-                if (interaction is DragInteraction.Start) pendingSection = null
-            }
-        }
-        if (faces.isEmpty()) {
-            MineEmptyState()
-            return@CompositionLocalProvider
-        }
-        Column(Modifier.fillMaxSize()) {
-            if (sectioned) {
-                val chipSections = sections.indices.toList()
-                CategoryChips(
-                    labels = chipSections.map { categoryLabel(sections[it].category) },
-                    selected = chipSections.indexOf(pendingSection ?: activeSection),
-                    onSelect = { chip ->
-                        val index = chipSections.getOrNull(chip) ?: return@CategoryChips
-                        val section = sections.getOrNull(index) ?: return@CategoryChips
-                        pendingSection = index
-                        val target = section.headerIndex
-                        scope.launch {
-                            val first = grid.firstVisibleItemIndex
-                            if (abs(target - first) > JUMP_ITEMS) {
-                                grid.scrollToItem(if (target > first) target - LEAD_ITEMS else target + LEAD_ITEMS)
-                            }
-                            grid.animateScrollToItem(target, with(density) { HEADER_NUDGE.roundToPx() })
+        val listState = rememberLazyListState()
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 6.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            items(sections, key = { it.category }) { section ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CarouselSectionHeader(
+                        title = categoryLabel(section.category),
+                        count = section.faces.size
+                    )
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(section.faces, key = { it.style }) { preset ->
+                            ClockCarouselCard(
+                                preset = preset,
+                                face = previews[preset.style] ?: preset.face,
+                                selected = checked(preset),
+                                onClick = { onSelect(preset.style) },
+                                onLongClick = { onLongPress(preset) }
+                            )
                         }
-                    },
-                    modifier = Modifier
-                        .padding(top = CHIPS_GAP)
-                        .fillMaxWidth()
-                        .height(CHIPS_HEIGHT)
-                )
-            }
-            LazyVerticalGrid(
-                columns = if (block) GridCells.Fixed(FaceGrid.ROW_CELLS) else GridCells.Adaptive(THUMB_WIDTH),
-                state = grid,
-                modifier = Modifier
-                    .weight(1f)
-                    .fadingEdges(grid, Orientation.Vertical, GRID_FADE),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(start = 20.dp, top = GRID_FADE, end = 20.dp, bottom = GRID_FADE)
-            ) {
-                sections.forEach { section ->
-                    if (sectioned) item(key = HEADER_KEY + section.category, span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            categoryLabel(section.category),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 2.dp, top = 4.dp)
-                        )
                     }
-                    items(
-                        section.faces,
-                        key = { it.style },
-                        span = { preset -> GridItemSpan(if (block) preset.face.span.coerceIn(1, maxLineSpan) else 1) }
-                    ) { preset ->
-                        FaceThumb(
-                            preset = preset,
-                            face = previews[preset.style] ?: preset.face,
-                            block = block,
-                            selected = checked(preset),
-                            onClick = { onSelect(preset.style) },
-                            onLongClick = onLongPress?.let { { it(preset) } }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WidgetCarouselsBody(
+    zone: WidgetZone,
+    placedItems: List<CompositionItem>,
+    sections: List<FaceSection>,
+    faceOf: (Int) -> ClockFace?,
+    checked: (FacePreset) -> Boolean,
+    onSelectPreset: (Int) -> Unit,
+    onEditPlaced: (Int) -> Unit,
+    onRemovePlaced: (Int) -> Unit
+) {
+    CompositionLocalProvider(LocalFaceData provides LocalSampleFaceData.current) {
+        val isInline = zone == WidgetZone.INLINE_1X2
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (placedItems.isNotEmpty()) {
+                item(key = "placed_strip") {
+                    PlacedSlotsRow(
+                        items = placedItems,
+                        faceOf = faceOf,
+                        onEdit = onEditPlaced,
+                        onRemove = onRemovePlaced
+                    )
+                }
+            }
+            items(sections, key = { it.category }) { section ->
+                val visibleFaces = section.faces.filterNot { it.face.category == CustomFaces.ELEMENT_CATEGORY }
+                if (visibleFaces.isEmpty()) return@items
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CarouselSectionHeader(
+                        title = categoryLabel(section.category),
+                        count = visibleFaces.size
+                    )
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(visibleFaces, key = { it.style }) { preset ->
+                            WidgetCarouselCard(
+                                preset = preset,
+                                inline = isInline,
+                                selected = checked(preset),
+                                onClick = { onSelectPreset(preset.style) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlacedSlotsRow(
+    items: List<CompositionItem>,
+    faceOf: (Int) -> ClockFace?,
+    onEdit: (Int) -> Unit,
+    onRemove: (Int) -> Unit
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(items, key = { it.id }) { item ->
+            val label = faceOf(item.style)?.name ?: stringResource(R.string.panel_item)
+            val removeDesc = stringResource(R.string.action_remove)
+            Surface(
+                onClick = { onEdit(item.id) },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("placed_slot_${item.id}")
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 128.dp)
+                    )
+                    IconButton(
+                        onClick = { onRemove(item.id) },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .semantics { contentDescription = "$removeDesc $label" }
+                            .testTag("remove_slot_${item.id}")
+                    ) {
+                        AppIcon(
+                            icon = R.drawable.ic_cross,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            size = 16.dp
                         )
                     }
                 }
@@ -1079,26 +1597,51 @@ private fun FaceGrid(
 }
 
 @Composable
-private fun FaceThumb(
+private fun CarouselSectionHeader(title: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ClockCarouselCard(
     preset: FacePreset,
     face: ClockFace,
-    block: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)?
+    onLongClick: () -> Unit
 ) {
     val labelColor by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        label = "label"
+        tween(200),
+        label = "clockLabel"
     )
     val ring by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-        label = "thumbRing"
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+        tween(200),
+        label = "clockRing"
     )
-    val shape = RoundedCornerShape(THUMB_RADIUS)
+    val shape = RoundedCornerShape(CARD_RADIUS)
     Column(
-        Modifier
-            .fillMaxWidth()
+        modifier = Modifier
+            .width(CLOCK_CARD_WIDTH)
             .clip(shape)
             .combinedClickable(
                 interactionSource = null,
@@ -1106,30 +1649,119 @@ private fun FaceThumb(
                 role = Role.RadioButton,
                 onLongClick = onLongClick,
                 onClick = onClick
-            ),
+            )
+            .testTag("clock_card_${preset.style}"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(LABEL_GAP)
     ) {
         Box(
-            Modifier
+            modifier = Modifier
                 .fillMaxWidth()
                 .clip(shape)
                 .background(ThumbInk)
-                .border(THUMB_RING, ring, shape)
-                .padding(if (block) BLOCK_PADDING else CLOCK_PADDING),
+                .border(if (selected) CARD_RING else 1.dp, ring, shape)
+                .padding(CLOCK_PADDING),
             contentAlignment = Alignment.Center
         ) {
             CompositionLocalProvider(LocalPalette provides DarkPalette) {
-                if (block) {
-                    BoxWithConstraints(Modifier.fillMaxWidth().clipToBounds(), contentAlignment = Alignment.TopCenter) {
-                        ClockFacePreview(
-                            face = preset.face,
-                            modifier = Modifier.requiredWidth(maxWidth / FaceGrid.width(preset.face.span.coerceIn(1, FaceGrid.ROW_CELLS))),
-                            fit = false
-                        )
-                    }
-                } else {
-                    ClockFacePreview(face = face, modifier = Modifier.fillMaxWidth())
+                ClockFacePreview(face = face, modifier = Modifier.fillMaxWidth())
+            }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AppIcon(R.drawable.ic_check, tint = MaterialTheme.colorScheme.onPrimary, size = 12.dp)
+                }
+            }
+        }
+        MarqueeText(
+            preset.face.name,
+            style = MaterialTheme.typography.labelSmall,
+            color = labelColor,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun WidgetCarouselCard(
+    preset: FacePreset,
+    inline: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val labelColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        tween(200),
+        label = "widgetLabel"
+    )
+    val ring by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+        tween(200),
+        label = "widgetRing"
+    )
+    val span = preset.face.span.coerceIn(1, FaceGrid.ROW_CELLS)
+    val cardWidth = when {
+        inline -> INLINE_CARD_WIDTH
+        span >= 2 -> WIDGET_CARD_WIDE
+        else -> WIDGET_CARD_UNIT
+    }
+    val previewSpan = if (inline) 2 else span
+    val shape = RoundedCornerShape(CARD_RADIUS)
+
+    Column(
+        modifier = Modifier
+            .width(cardWidth)
+            .clip(shape)
+            .combinedClickable(
+                interactionSource = null,
+                indication = ripple(),
+                role = Role.Checkbox,
+                onClick = onClick
+            )
+            .testTag("widget_card_${preset.style}"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(LABEL_GAP)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 68.dp)
+                .clip(shape)
+                .background(ThumbInk)
+                .border(if (selected) CARD_RING else 1.dp, ring, shape)
+                .padding(BLOCK_PADDING),
+            contentAlignment = Alignment.Center
+        ) {
+            CompositionLocalProvider(LocalPalette provides DarkPalette) {
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clipToBounds(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ClockFacePreview(
+                        face = preset.face,
+                        modifier = Modifier.requiredWidth(maxWidth / FaceGrid.width(previewSpan)),
+                        fit = false
+                    )
+                }
+            }
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AppIcon(R.drawable.ic_check, tint = MaterialTheme.colorScheme.onPrimary, size = 12.dp)
                 }
             }
         }
@@ -1145,12 +1777,14 @@ private fun FaceThumb(
 private val KEYBOARD_SHEET = 280.dp
 private const val KEYBOARD_MS = 280
 private val MODE_TABS_GAP = 10.dp
-private val MODE_TABS_MIN_WIDTH = 72.dp
+private val MODE_TABS_MIN_WIDTH = 76.dp
 private val MODE_TABS_MAX_WIDTH = 96.dp
-private val TABS_GAP = 6.dp
-private val TITLE_HEIGHT = 24.dp
-private val KIND_TABS_WIDTH = 164.dp
-private const val ROW_SHIFT = 32
-private const val ROW_MASK = 0xFFFFFFFFL
 
-private val FONT_TYPES = arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream")
+private val FONT_TYPES = arrayOf(
+    "font/*",
+    "application/x-font-ttf",
+    "application/x-font-otf",
+    "application/font-sfnt",
+    "application/vnd.ms-opentype",
+    "application/octet-stream"
+)

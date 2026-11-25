@@ -29,6 +29,8 @@ object PrefKeys {
     const val WEATHER_PLACE = "weather_place"
     const val WEATHER_INTERVAL = "weather_interval"
     const val WEATHER_STATUS = "weather_status"
+    const val SHORTCUT_LEFT = "shortcut_left"
+    const val SHORTCUT_RIGHT = "shortcut_right"
     const val DEFAULT_CLOCK_ENABLED = true
     const val DEFAULT_BURN_IN = true
 }

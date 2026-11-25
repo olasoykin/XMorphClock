@@ -10,6 +10,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
+import com.drdisagree.xmorphclock.domain.model.WeatherCity
 import java.util.Locale
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,40 @@ class LocationSource(private val context: Context) {
         address?.locality ?: address?.subAdminArea ?: address?.adminArea.orEmpty()
     }
 
+    suspend fun searchCities(query: String): List<WeatherCity> = withContext(Dispatchers.IO) {
+        val remote = OpenMeteoSource.searchCities(query)
+        if (remote.isNotEmpty()) return@withContext remote
+        if (!Geocoder.isPresent()) return@withContext emptyList()
+        val geocoder = Geocoder(context, Locale.getDefault())
+        val addresses = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            legacySearchList(geocoder, query)
+        } else {
+            withTimeoutOrNull(TIMEOUT_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    geocoder.getFromLocationName(query, 5, object : Geocoder.GeocodeListener {
+                        override fun onGeocode(addresses: MutableList<Address>) {
+                            continuation.resume(addresses)
+                        }
+
+                        override fun onError(errorMessage: String?) {
+                            continuation.resume(emptyList())
+                        }
+                    })
+                }
+            }.orEmpty()
+        }
+        addresses.mapNotNull { address ->
+            val city = address.locality ?: address.subAdminArea ?: address.adminArea ?: return@mapNotNull null
+            WeatherCity(
+                name = city,
+                region = address.adminArea.orEmpty(),
+                country = address.countryName.orEmpty(),
+                latitude = address.latitude,
+                longitude = address.longitude
+            )
+        }
+    }
+
     suspend fun search(query: String): Address? = withContext(Dispatchers.IO) {
         if (!Geocoder.isPresent()) return@withContext null
         val geocoder = Geocoder(context, Locale.getDefault())
@@ -95,6 +130,10 @@ class LocationSource(private val context: Context) {
     @Suppress("DEPRECATION")
     private fun legacySearch(geocoder: Geocoder, query: String): Address? =
         runCatching { geocoder.getFromLocationName(query, 1)?.firstOrNull() }.getOrNull()
+
+    @Suppress("DEPRECATION")
+    private fun legacySearchList(geocoder: Geocoder, query: String): List<Address> =
+        runCatching { geocoder.getFromLocationName(query, 5).orEmpty() }.getOrDefault(emptyList())
 
     private companion object {
         const val FRESH_MS = 30 * 60_000L

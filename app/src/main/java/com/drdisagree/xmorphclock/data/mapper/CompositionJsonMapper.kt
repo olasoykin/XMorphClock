@@ -12,6 +12,9 @@ object CompositionJsonMapper {
 
     fun toJson(composition: Composition): String = JSONObject()
         .put("nextId", composition.nextId)
+        .put("gridDocked", composition.gridDocked)
+        .put("inlineDocked", composition.inlineDocked)
+        .put("widgetsAbove", composition.widgetsAbove)
         .put("items", JSONArray().apply {
             composition.items.forEach { item ->
                 put(
@@ -55,7 +58,13 @@ object CompositionJsonMapper {
                     }.orEmpty()
                 )
             }
-            Composition(items, root.optInt("nextId", (items.maxOfOrNull { it.id } ?: 0) + 1))
+            Composition(
+                items = items,
+                nextId = root.optInt("nextId", (items.maxOfOrNull { it.id } ?: 0) + 1),
+                gridDocked = root.optBoolean("gridDocked", true),
+                inlineDocked = root.optBoolean("inlineDocked", true),
+                widgetsAbove = root.optBoolean("widgetsAbove", false)
+            )
         } catch (_: Exception) {
             Composition()
         }

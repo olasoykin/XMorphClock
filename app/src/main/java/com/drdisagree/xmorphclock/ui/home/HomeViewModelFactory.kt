@@ -22,7 +22,9 @@ fun homeViewModelFactory(container: AppContainer): ViewModelProvider.Factory = v
             applyClockPreset = container.applyClockPreset,
             saveStylePreset = container.saveStylePreset,
             updateStylePreset = container.updateStylePreset,
-            observeStyleStatus = container.observeStyleStatus
+            observeStyleStatus = container.observeStyleStatus,
+            setLockscreenShortcut = container.setLockscreenShortcut,
+            syncLockscreenShortcuts = container.syncLockscreenShortcuts
         )
     }
 }

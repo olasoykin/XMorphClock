@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -27,19 +29,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.drdisagree.xmorphclock.R
+import com.drdisagree.xmorphclock.domain.model.WeatherCity
 import com.drdisagree.xmorphclock.domain.model.WeatherProvider
 import com.drdisagree.xmorphclock.domain.model.WeatherSettings
 import com.drdisagree.xmorphclock.domain.model.WeatherState
 import com.drdisagree.xmorphclock.domain.model.WeatherStatus
+import com.drdisagree.xmorphclock.ui.components.AppIcon
 import com.drdisagree.xmorphclock.ui.components.ExpressiveIconButton
 import com.drdisagree.xmorphclock.ui.components.ExpressiveSegmentedTabs
 import com.drdisagree.xmorphclock.ui.components.FitText
+import com.drdisagree.xmorphclock.ui.components.WeatherLocationDialog
 import com.drdisagree.xmorphclock.ui.components.rememberSpin
 import java.text.DateFormat
 import java.util.Date
@@ -48,12 +57,37 @@ import java.util.Date
 fun WeatherCard(
     state: WeatherState,
     notFound: Boolean,
+    cityResults: List<WeatherCity>,
+    citySearching: Boolean,
     onChange: (WeatherSettings) -> Unit,
     onLocation: (String?) -> Unit,
+    onSearchCities: (String, Boolean) -> Unit,
+    onSelectCity: (WeatherCity) -> Unit,
     onRefresh: () -> Unit
 ) {
     var custom by remember(state.settings.hasCustomLocation) { mutableStateOf(state.settings.hasCustomLocation) }
+    var dialogOpen by remember { mutableStateOf(false) }
     val settings = state.settings
+
+    WeatherLocationDialog(
+        visible = dialogOpen,
+        currentLocationName = settings.locationName,
+        hasCustomLocation = settings.hasCustomLocation,
+        results = cityResults,
+        searching = citySearching,
+        onQueryChange = { q -> onSearchCities(q, false) },
+        onSearchImmediate = { q -> onSearchCities(q, true) },
+        onSelectCity = { city ->
+            custom = true
+            onSelectCity(city)
+        },
+        onUseCurrentLocation = {
+            custom = false
+            onLocation(null)
+        },
+        onDismiss = { dialogOpen = false }
+    )
+
     SectionCard {
         Row(
             Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
@@ -103,7 +137,11 @@ fun WeatherCard(
             selected = if (custom) 1 else 0,
             onSelect = { index ->
                 custom = index == 1
-                if (index == 0 && settings.hasCustomLocation) onLocation(null)
+                if (index == 0) {
+                    if (settings.hasCustomLocation) onLocation(null)
+                } else {
+                    dialogOpen = true
+                }
             }
         )
         AnimatedVisibility(
@@ -112,13 +150,45 @@ fun WeatherCard(
             exit = fadeOut(tween(160)) + shrinkVertically(tween(280))
         ) {
             Column {
-                TextInput(
-                    value = settings.locationName,
-                    hint = stringResource(R.string.weather_city),
-                    password = false,
-                    commitOnDone = true,
-                    onCommit = { if (it.isNotBlank()) onLocation(it) }
-                )
+                Surface(
+                    onClick = { dialogOpen = true },
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp)
+                        .fillMaxWidth()
+                        .semantics { role = Role.Button }
+                        .testTag("weather_city_picker_trigger")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        AppIcon(
+                            icon = R.drawable.ic_location,
+                            tint = MaterialTheme.colorScheme.primary,
+                            size = 20.dp
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (settings.locationName.isNotBlank()) settings.locationName else stringResource(R.string.weather_city),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (settings.locationName.isNotBlank()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        AppIcon(
+                            icon = R.drawable.ic_search,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            size = 18.dp
+                        )
+                    }
+                }
                 AnimatedVisibility(visible = notFound) {
                     Text(
                         stringResource(R.string.weather_city_not_found),

@@ -6,6 +6,8 @@ import androidx.core.content.edit
 import com.drdisagree.xmorphclock.data.mapper.CompositionJsonMapper
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.ClockSettings
+import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
+import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.domain.model.ThemeMode
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -25,8 +27,13 @@ class LocalPrefsSource(context: Context) {
             themeMode = prefs.getString(PrefKeys.THEME_MODE, null)
                 ?.let { name -> ThemeMode.entries.firstOrNull { it.name == name } }
                 ?: ThemeMode.SYSTEM,
-            composition = CompositionJsonMapper.fromJson(prefs.getString(PrefKeys.COMPOSITION, null))
+            composition = CompositionJsonMapper.fromJson(prefs.getString(PrefKeys.COMPOSITION, null)),
+            shortcutLeft = prefs.getString(PrefKeys.SHORTCUT_LEFT, null)?.trim()?.takeIf { it.isNotEmpty() } ?: SystemShortcut.DEFAULT_LEFT.id,
+            shortcutRight = prefs.getString(PrefKeys.SHORTCUT_RIGHT, null)?.trim()?.takeIf { it.isNotEmpty() } ?: SystemShortcut.DEFAULT_RIGHT.id
         )
+
+    val hasConfiguredShortcuts: Boolean
+        get() = prefs.contains(PrefKeys.SHORTCUT_LEFT) || prefs.contains(PrefKeys.SHORTCUT_RIGHT)
 
     val isOnboardingDone: Boolean
         get() = prefs.getBoolean(PrefKeys.ONBOARDING_DONE, false)
@@ -69,6 +76,19 @@ class LocalPrefsSource(context: Context) {
     fun setOnboardingDone(done: Boolean) {
         prefs.edit { putBoolean(PrefKeys.ONBOARDING_DONE, done) }
     }
+
+    fun setShortcut(slot: ShortcutSlot, affordanceId: String) {
+        val key = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT else PrefKeys.SHORTCUT_RIGHT
+        prefs.edit { putString(key, affordanceId) }
+    }
 }
 
-private val SETTINGS_KEYS = setOf(PrefKeys.CLOCK_ENABLED, PrefKeys.FACE_STYLE, PrefKeys.BURN_IN, PrefKeys.THEME_MODE, PrefKeys.COMPOSITION)
+private val SETTINGS_KEYS = setOf(
+    PrefKeys.CLOCK_ENABLED,
+    PrefKeys.FACE_STYLE,
+    PrefKeys.BURN_IN,
+    PrefKeys.THEME_MODE,
+    PrefKeys.COMPOSITION,
+    PrefKeys.SHORTCUT_LEFT,
+    PrefKeys.SHORTCUT_RIGHT
+)

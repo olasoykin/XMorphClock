@@ -5,5 +5,7 @@ data class ClockSettings(
     val faceStyle: Int,
     val burnInProtection: Boolean,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val composition: Composition = Composition()
+    val composition: Composition = Composition(),
+    val shortcutLeft: String = SystemShortcut.DEFAULT_LEFT.id,
+    val shortcutRight: String = SystemShortcut.DEFAULT_RIGHT.id
 )

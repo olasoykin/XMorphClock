@@ -30,9 +30,10 @@ object FaceComposer {
             item to face
         }
         fun rename(item: CompositionItem, node: FaceNode): FaceNode = if (item.clock) node else ids(node) { prefix(item.id) + it }
-        fun tree(state: ItemState, pick: (ClockFace) -> FaceNode, place: (CompositionItem, FaceNode) -> FacePlacement): FaceNode = StackNode(
+        fun tree(state: ItemState, pick: (ClockFace, Boolean) -> FaceNode, place: (CompositionItem, FaceNode) -> FacePlacement): FaceNode = StackNode(
             children = entries.map { (item, face) ->
-                val node = FaceEditor.scaleNode(pick(face), item.scale(state))
+                val effectiveScale = if (item.clock) item.scale(state) else item.largeScale
+                val node = FaceEditor.scaleNode(pick(face, item.clock), effectiveScale)
                 val placement = place(item, node)
                 placed(rename(item, node), if (item.visible(state)) placement else placement.copy(hidden = true))
             }
@@ -40,10 +41,10 @@ object FaceComposer {
         val aod = items.any { it.hasAod } || entries.any { (_, face) -> face.aodLarge != null || face.aodSmall != null }
         return clock.copy(
             layers = entries.flatMap { (item, face) -> if (item.clock) face.layers else face.layers.map { it.copy(id = prefix(item.id) + it.id) } },
-            large = tree(ItemState.LARGE, { it.large }) { item, node -> item.large ?: node.placement },
-            small = tree(ItemState.SMALL, { it.small }) { item, node -> item.small ?: node.placement },
-            aodLarge = if (aod) tree(ItemState.AOD_LARGE, { it.aodLarge ?: it.large }) { item, node -> item.large ?: node.placement } else null,
-            aodSmall = if (aod) tree(ItemState.AOD_SMALL, { it.aodSmall ?: it.small }) { item, node -> item.small ?: node.placement } else null
+            large = tree(ItemState.LARGE, { f, _ -> f.large }) { item, node -> item.large ?: node.placement },
+            small = tree(ItemState.SMALL, { f, isClock -> if (isClock) f.small else f.large }) { item, node -> item.small ?: node.placement },
+            aodLarge = if (aod) tree(ItemState.AOD_LARGE, { f, _ -> f.aodLarge ?: f.large }) { item, node -> item.placement(ItemState.AOD_LARGE) ?: node.placement } else null,
+            aodSmall = if (aod) tree(ItemState.AOD_SMALL, { f, isClock -> if (isClock) f.aodSmall ?: f.small else f.aodLarge ?: f.large }) { item, node -> item.placement(ItemState.AOD_SMALL) ?: node.placement } else null
         )
     }
 
@@ -57,8 +58,10 @@ object FaceComposer {
             if (item.clock) isClockLayer(first) else itemOf(first) == item.id
         }
         val clockItem = items.firstOrNull { it.clock }
-        fun unscaled(node: FaceNode?, item: CompositionItem, state: ItemState): FaceNode? =
-            node?.let { FaceEditor.scaleNode(it, 1f / item.scale(state)) }
+        fun unscaled(node: FaceNode?, item: CompositionItem, state: ItemState): FaceNode? {
+            val scale = if (item.clock) item.scale(state) else item.largeScale
+            return node?.let { FaceEditor.scaleNode(it, 1f / scale) }
+        }
         val clock = clockItem?.let { item ->
             val largeChild = unscaled(child(large, item), item, ItemState.LARGE)
             val smallChild = unscaled(child(small, item), item, ItemState.SMALL)
@@ -83,7 +86,7 @@ object FaceComposer {
             val rebuilt = original.copy(
                 layers = face.layers.filter { it.id.startsWith(prefix) }.map { it.copy(id = it.id.removePrefix(prefix)) },
                 large = largeChild?.let { placed(ids(it) { id -> id.removePrefix(prefix) }, original.large.placement) } ?: original.large,
-                small = smallChild?.let { placed(ids(it) { id -> id.removePrefix(prefix) }, original.small.placement) } ?: original.small
+                small = original.small
             )
             widgets[item.style] = rebuilt.copy(
                 aodLarge = ItemGrouping.syncAod(rebuilt.large, original.aodLarge),

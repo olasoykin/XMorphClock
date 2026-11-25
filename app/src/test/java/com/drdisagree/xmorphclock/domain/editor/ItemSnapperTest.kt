@@ -21,4 +21,17 @@ class ItemSnapperTest {
         val result = ItemSnapper.snap(ItemBounds(0.1f, 0.9f, 0.2f, 1f), listOf(ItemBounds(0.6f, 0.2f, 0.7f, 0.3f)))
         assertNull(result.guideY)
     }
+
+    @Test
+    fun snapsToScreenCenterXY() {
+        val result = ItemSnapper.snap(
+            moving = ItemBounds(0.39f, 0.71f, 0.59f, 0.91f),
+            others = emptyList(),
+            screenCenterY = 0.80f
+        )
+        assertEquals(0.01f, result.dx, 1e-4f)
+        assertEquals(-0.01f, result.dy, 1e-4f)
+        assertEquals(0.5f, result.guideX!!, 1e-4f)
+        assertEquals(0.80f, result.guideY!!, 1e-4f)
+    }
 }

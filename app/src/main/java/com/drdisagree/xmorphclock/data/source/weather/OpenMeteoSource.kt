@@ -2,7 +2,10 @@ package com.drdisagree.xmorphclock.data.source.weather
 
 import android.content.Context
 import com.drdisagree.xmorphclock.domain.model.HourlyPoint
+import com.drdisagree.xmorphclock.domain.model.WeatherCity
 import com.drdisagree.xmorphclock.domain.model.WeatherSnapshot
+import java.net.URLEncoder
+import java.util.Locale
 import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,8 +13,34 @@ import org.json.JSONObject
 internal object OpenMeteoSource {
 
     private const val BASE = "https://api.open-meteo.com/v1/forecast"
+    private const val GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1/search"
     private const val HOURS = 24
+    private const val CITY_LIMIT = 8
     private const val SECOND_MS = 1000L
+
+    suspend fun searchCities(query: String): List<WeatherCity> {
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+        val encoded = URLEncoder.encode(trimmed, Charsets.UTF_8.name())
+        val lang = Locale.getDefault().language.ifBlank { "en" }
+        val url = "$GEOCODE_BASE?name=$encoded&count=$CITY_LIMIT&language=$lang&format=json"
+        val root = HttpJson.get(url) ?: return emptyList()
+        val results = root.optJSONArray("results") ?: return emptyList()
+        return (0 until results.length()).mapNotNull { index ->
+            val obj = results.optJSONObject(index) ?: return@mapNotNull null
+            val name = obj.optString("name").trim()
+            val lat = obj.optDouble("latitude", Double.NaN)
+            val lon = obj.optDouble("longitude", Double.NaN)
+            if (name.isEmpty() || lat.isNaN() || lon.isNaN()) return@mapNotNull null
+            WeatherCity(
+                name = name,
+                region = obj.optString("admin1").trim(),
+                country = obj.optString("country").trim(),
+                latitude = lat,
+                longitude = lon
+            )
+        }
+    }
 
     suspend fun fetch(context: Context, latitude: Double, longitude: Double, metric: Boolean, location: String): WeatherSnapshot? {
         val units = if (metric) "" else "&temperature_unit=fahrenheit&wind_speed_unit=mph"

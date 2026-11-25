@@ -448,6 +448,17 @@ class EditorViewModel(
         shift(face, current, id, dx, dy)
     }
 
+    fun moveAll(deltas: Map<String, Pair<Float, Float>>) = edit("move:all") { face, current ->
+        var next = face
+        deltas.forEach { (id, step) ->
+            val (dx, dy) = step
+            if (dx != 0f || dy != 0f) {
+                next = shift(next, current, id, dx, dy)
+            }
+        }
+        next
+    }
+
     private fun shift(face: ClockFace, current: EditorUiState, id: String, dx: Float, dy: Float): ClockFace {
         val large = if (current.scope == EditScope.AOD) current.aodLarge else current.scope == EditScope.LARGE
         return if (ItemGroups.isGroup(id)) {

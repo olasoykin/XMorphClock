@@ -91,16 +91,20 @@ import com.drdisagree.xmorphclock.domain.usecase.SaveCompositionUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SaveReportUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SaveStylePresetUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SaveWeatherSettingsUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SearchWeatherCitiesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetBurnInProtectionUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetClockEnabledUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthEnabledUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthOpacityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthWidgetsFrontUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SetLockscreenShortcutUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetOnboardingDoneUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetThemeModeUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SetWeatherCityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherLocationUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SnapshotWidgetsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SyncAppliedFaceUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SyncLockscreenShortcutsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.UngroupItemUseCase
 import com.drdisagree.xmorphclock.domain.usecase.UpdateCompositionUseCase
 import com.drdisagree.xmorphclock.domain.usecase.UpdateStylePresetUseCase
@@ -186,6 +190,8 @@ class AppContainer(context: Context) {
     val saveWeatherSettings = SaveWeatherSettingsUseCase(faceDataRepository)
     val refreshWeather = RefreshWeatherUseCase(faceDataRepository)
     val setWeatherLocation = SetWeatherLocationUseCase(faceDataRepository)
+    val searchWeatherCities = SearchWeatherCitiesUseCase(faceDataRepository)
+    val setWeatherCity = SetWeatherCityUseCase(faceDataRepository)
     val importImage = ImportImageUseCase(imageRepository)
     val importFont = ImportFontUseCase(fontRepository)
     val observeUserFonts = ObserveUserFontsUseCase(fontRepository)
@@ -203,6 +209,8 @@ class AppContainer(context: Context) {
     val setBurnInProtection = SetBurnInProtectionUseCase(settingsRepository)
     val setThemeMode = SetThemeModeUseCase(settingsRepository)
     val setOnboardingDone = SetOnboardingDoneUseCase(settingsRepository)
+    val setLockscreenShortcut = SetLockscreenShortcutUseCase(settingsRepository)
+    val syncLockscreenShortcuts = SyncLockscreenShortcutsUseCase(settingsRepository)
     val exportPresets = ExportPresetsUseCase(presetTransferRepository)
     val readPresetFile = ReadPresetFileUseCase(presetTransferRepository)
     val importPresets = ImportPresetsUseCase(presetTransferRepository)

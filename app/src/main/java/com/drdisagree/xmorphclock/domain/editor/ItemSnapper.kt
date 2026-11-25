@@ -11,9 +11,15 @@ object ItemSnapper {
     private const val EDGE = 0.0225f
     private const val HALF = 0.5f
 
-    fun snap(moving: ItemBounds, others: List<ItemBounds>): SnapResult {
+    fun snap(
+        moving: ItemBounds,
+        others: List<ItemBounds>,
+        screenCenterY: Float? = null,
+        snapYToOthers: Boolean = true
+    ): SnapResult {
         val targetsX = others.flatMap { listOf(it.left, (it.left + it.right) / 2f, it.right) } + listOf(EDGE, HALF, 1f - EDGE)
-        val targetsY = others.flatMap { listOf(it.top, (it.top + it.bottom) / 2f, it.bottom) }
+        val targetsY = (if (snapYToOthers) others.flatMap { listOf(it.top, (it.top + it.bottom) / 2f, it.bottom) } else emptyList()) +
+            listOfNotNull(screenCenterY)
         val x = best(listOf(moving.left, (moving.left + moving.right) / 2f, moving.right), targetsX)
         val y = best(listOf(moving.top, (moving.top + moving.bottom) / 2f, moving.bottom), targetsY)
         return SnapResult(x?.delta ?: 0f, y?.delta ?: 0f, x?.target, y?.target, x?.let { ANCHORS[it.feature] })

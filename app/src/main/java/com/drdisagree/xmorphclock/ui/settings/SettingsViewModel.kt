@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.drdisagree.xmorphclock.domain.model.FaceKind
 import com.drdisagree.xmorphclock.domain.model.PresetFileError
 import com.drdisagree.xmorphclock.domain.model.ThemeMode
+import com.drdisagree.xmorphclock.domain.model.WeatherCity
 import com.drdisagree.xmorphclock.domain.model.WeatherSettings
 import com.drdisagree.xmorphclock.domain.usecase.ClosePresetFileUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ExportPresetsUseCase
@@ -18,6 +19,7 @@ import com.drdisagree.xmorphclock.domain.usecase.ReadPresetFileUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RefreshWeatherUseCase
 import com.drdisagree.xmorphclock.domain.usecase.RetryDepthUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SaveWeatherSettingsUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SearchWeatherCitiesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetBurnInProtectionUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetClockEnabledUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthEnabledUseCase
@@ -26,7 +28,10 @@ import com.drdisagree.xmorphclock.domain.usecase.ObserveFacesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthOpacityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthWidgetsFrontUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetThemeModeUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SetWeatherCityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherLocationUseCase
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +49,8 @@ class SettingsViewModel(
     private val saveWeatherSettings: SaveWeatherSettingsUseCase,
     private val refreshWeather: RefreshWeatherUseCase,
     private val setWeatherLocation: SetWeatherLocationUseCase,
+    private val searchWeatherCities: SearchWeatherCitiesUseCase,
+    private val setWeatherCity: SetWeatherCityUseCase,
     observeDepthSettings: ObserveDepthSettingsUseCase,
     observeDepthStatus: ObserveDepthStatusUseCase,
     private val retryDepth: RetryDepthUseCase,
@@ -60,6 +67,9 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     private val notFound = MutableStateFlow(false)
+    private val cityResults = MutableStateFlow<List<WeatherCity>>(emptyList())
+    private val citySearching = MutableStateFlow(false)
+    private var citySearchJob: Job? = null
     private val transfer = MutableStateFlow<PresetTransfer?>(null)
     private val pendingImport = MutableStateFlow<PendingPresetImport?>(null)
 
@@ -68,19 +78,22 @@ class SettingsViewModel(
 
     val uiState: StateFlow<SettingsUiState> = combine(
         observeSettings(),
-        observeWeather(),
-        notFound,
+        combine(observeWeather(), notFound, cityResults, citySearching) { weather, missing, results, searching ->
+            WeatherSearchUi(weather, missing, results, searching)
+        },
         combine(observeDepthSettings(), observeDepthStatus()) { depth, status -> depth to status },
         combine(observeOwnPresets(), observeFaces(FaceKind.WEATHER), observeFaces(FaceKind.WIDGET)) { own, weathers, widgets ->
             own to composePresetPreviews(mapOf(FaceKind.CLOCK to own, FaceKind.WEATHER to weathers, FaceKind.WIDGET to widgets))
         }
-    ) { settings, weather, missing, (depth, depthStatus), (own, previews) ->
+    ) { settings, weatherUi, (depth, depthStatus), (own, previews) ->
         SettingsUiState(
             clockEnabled = settings.clockEnabled,
             burnInProtection = settings.burnInProtection,
             themeMode = settings.themeMode,
-            weather = weather,
-            locationNotFound = missing,
+            weather = weatherUi.weather,
+            locationNotFound = weatherUi.missing,
+            cityResults = weatherUi.results,
+            citySearching = weatherUi.searching,
             depth = depth,
             depthStatus = depthStatus,
             ownPresets = own,
@@ -119,6 +132,29 @@ class SettingsViewModel(
 
     fun onWeatherLocation(query: String?) {
         viewModelScope.launch { notFound.value = !setWeatherLocation(query) }
+    }
+
+    fun onSearchWeatherCities(query: String, immediate: Boolean = false) {
+        citySearchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) {
+            cityResults.value = emptyList()
+            citySearching.value = false
+            return
+        }
+        citySearching.value = true
+        citySearchJob = viewModelScope.launch {
+            if (!immediate) delay(CITY_SEARCH_DEBOUNCE_MS)
+            cityResults.value = searchWeatherCities(trimmed)
+            citySearching.value = false
+        }
+    }
+
+    fun onSelectWeatherCity(city: WeatherCity) {
+        notFound.value = false
+        citySearchJob?.cancel()
+        citySearching.value = false
+        viewModelScope.launch { setWeatherCity(city) }
     }
 
     fun onRefreshWeather() {
@@ -178,6 +214,17 @@ class SettingsViewModel(
         PresetFileError.UNSUPPORTED_VERSION -> PresetTransferStatus.UNSUPPORTED_VERSION
         PresetFileError.DAMAGED -> PresetTransferStatus.DAMAGED
         PresetFileError.READ_FAILED -> PresetTransferStatus.READ_FAILED
+    }
+
+    private data class WeatherSearchUi(
+        val weather: com.drdisagree.xmorphclock.domain.model.WeatherState,
+        val missing: Boolean,
+        val results: List<WeatherCity>,
+        val searching: Boolean
+    )
+
+    private companion object {
+        const val CITY_SEARCH_DEBOUNCE_MS = 280L
     }
 }
 

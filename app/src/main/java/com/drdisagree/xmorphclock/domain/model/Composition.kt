@@ -2,8 +2,17 @@ package com.drdisagree.xmorphclock.domain.model
 
 data class Composition(
     val items: List<CompositionItem> = listOf(CompositionItem(id = 0, clock = true)),
-    val nextId: Int = 1
+    val nextId: Int = 1,
+    val gridDocked: Boolean = true,
+    val inlineDocked: Boolean = true,
+    val widgetsAbove: Boolean = false
 ) {
+    fun withDocked(grid: Boolean? = null, inline: Boolean? = null, above: Boolean? = null): Composition =
+        copy(
+            gridDocked = grid ?: gridDocked,
+            inlineDocked = inline ?: inlineDocked,
+            widgetsAbove = above ?: widgetsAbove
+        )
     val clockItem: CompositionItem?
         get() = items.firstOrNull { it.clock }
 

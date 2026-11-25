@@ -10,6 +10,16 @@ import com.drdisagree.xmorphclock.R
 fun WeatherSettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     SettingsPage(stringResource(R.string.section_weather), state.loaded, onBack) {
-        WeatherCard(state.weather, state.locationNotFound, viewModel::onWeatherSettingsChange, viewModel::onWeatherLocation, viewModel::onRefreshWeather)
+        WeatherCard(
+            state = state.weather,
+            notFound = state.locationNotFound,
+            cityResults = state.cityResults,
+            citySearching = state.citySearching,
+            onChange = viewModel::onWeatherSettingsChange,
+            onLocation = viewModel::onWeatherLocation,
+            onSearchCities = viewModel::onSearchWeatherCities,
+            onSelectCity = viewModel::onSelectWeatherCity,
+            onRefresh = viewModel::onRefreshWeather
+        )
     }
 }

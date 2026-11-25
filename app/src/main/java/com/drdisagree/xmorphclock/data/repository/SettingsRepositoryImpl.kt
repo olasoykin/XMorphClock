@@ -3,10 +3,13 @@ package com.drdisagree.xmorphclock.data.repository
 import com.drdisagree.xmorphclock.data.mapper.ClockFaceJsonMapper
 import com.drdisagree.xmorphclock.data.source.LocalPrefsSource
 import com.drdisagree.xmorphclock.data.source.PrefKeys
+import com.drdisagree.xmorphclock.data.source.SystemShortcutController
 import com.drdisagree.xmorphclock.data.source.XposedServiceSource
 import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.ClockSettings
 import com.drdisagree.xmorphclock.domain.model.Composition
+import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
+import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.domain.model.ThemeMode
 import com.drdisagree.xmorphclock.domain.repository.SettingsRepository
 import kotlinx.coroutines.Dispatchers
@@ -58,12 +61,32 @@ class SettingsRepositoryImpl(
         local.setOnboardingDone(done)
     }
 
+    override suspend fun setShortcut(slot: ShortcutSlot, shortcut: SystemShortcut) = withContext(Dispatchers.IO) {
+        local.setShortcut(slot, shortcut)
+        val key = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT else PrefKeys.SHORTCUT_RIGHT
+        remote.edit { it.putString(key, shortcut.id) }
+        SystemShortcutController.apply(slot, shortcut)
+        Unit
+    }
+
+    override suspend fun syncSystemShortcuts() = withContext(Dispatchers.IO) {
+        if (local.hasConfiguredShortcuts) return@withContext
+        val systemSelections = SystemShortcutController.readSelections() ?: return@withContext
+        systemSelections[ShortcutSlot.LEFT]?.let { local.setShortcut(ShortcutSlot.LEFT, it) }
+        systemSelections[ShortcutSlot.RIGHT]?.let { local.setShortcut(ShortcutSlot.RIGHT, it) }
+        Unit
+    }
+
     private fun push(settings: ClockSettings) {
         remote.edit {
             it.putBoolean(PrefKeys.CLOCK_ENABLED, settings.clockEnabled)
             it.putInt(PrefKeys.FACE_STYLE, settings.faceStyle)
             local.faceJson?.let { json -> it.putString(PrefKeys.FACE_JSON, json) }
             it.putBoolean(PrefKeys.BURN_IN, settings.burnInProtection)
+            if (local.hasConfiguredShortcuts) {
+                it.putString(PrefKeys.SHORTCUT_LEFT, settings.shortcutLeft)
+                it.putString(PrefKeys.SHORTCUT_RIGHT, settings.shortcutRight)
+            }
         }
     }
 }

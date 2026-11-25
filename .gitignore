@@ -40,3 +40,7 @@ desktop.ini
 # Local
 *md
 !README.md
+
+# AI Studio
+.aistudio/
+/public/assets/aistudio/
