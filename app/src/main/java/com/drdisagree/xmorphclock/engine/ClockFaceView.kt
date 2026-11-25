@@ -1766,7 +1766,8 @@ class ClockFaceView(
                 val p = map[id] ?: return@forEach
                 if (p.hidden || p.alpha <= 0f) return@forEach
                 extentOf(id, p, tmp)
-                if (union == null) union = RectF(tmp) else union!!.union(tmp)
+                val current = union
+                if (current == null) union = RectF(tmp) else current.union(tmp)
             }
             return union
         }

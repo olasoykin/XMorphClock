@@ -341,7 +341,6 @@ internal class WallpaperBackdrop(private val context: Context) {
         is RowNode -> node.children.flatMap(::effectsOf)
         is ColumnNode -> node.children.flatMap(::effectsOf)
         is StackNode -> node.children.flatMap(::effectsOf)
-        else -> emptyList()
     }
 
     private fun FaceTextEffect.usesBackdrop(): Boolean = this == FaceTextEffect.BLEND || this == FaceTextEffect.GLASS

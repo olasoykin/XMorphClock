@@ -484,7 +484,7 @@ object WidgetGrids {
                 val gTop = (refTop - slotGap - hGrid).coerceAtLeast(edgePadPx)
                 gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
             } else {
-                val refTop = gridRect?.top ?: cTop
+                val refTop = gridRect.top
                 val iTop = (refTop - slotGap - hInline).coerceAtLeast(edgePadPx)
                 iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
             }
@@ -498,19 +498,14 @@ object WidgetGrids {
                 val gTop = (cBottom + slotGap).coerceIn(edgePadPx, safeBottomPx - hGrid)
                 gRes = RectF(leftGrid, gTop, leftGrid + wGrid, gTop + hGrid)
             } else {
-                if (gridRect != null) {
-                    val canFitBelowGrid = safeBottomPx - gridRect.bottom >= hInline + slotGap
-                    val canFitBetweenClockAndGrid = gridRect.top - cBottom >= hInline + slotGap * 2f
-                    val iTop = when {
-                        canFitBelowGrid -> gridRect.bottom + slotGap
-                        canFitBetweenClockAndGrid -> cBottom + slotGap
-                        else -> (cTop - slotGap - hInline).coerceAtLeast(edgePadPx)
-                    }
-                    iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
-                } else {
-                    val iTop = (cBottom + slotGap).coerceIn(edgePadPx, safeBottomPx - hInline)
-                    iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
+                val canFitBelowGrid = safeBottomPx - gridRect.bottom >= hInline + slotGap
+                val canFitBetweenClockAndGrid = gridRect.top - cBottom >= hInline + slotGap * 2f
+                val iTop = when {
+                    canFitBelowGrid -> gridRect.bottom + slotGap
+                    canFitBetweenClockAndGrid -> cBottom + slotGap
+                    else -> (cTop - slotGap - hInline).coerceAtLeast(edgePadPx)
                 }
+                iRes = RectF(leftInline, iTop, leftInline + wInline, iTop + hInline)
             }
         }
 

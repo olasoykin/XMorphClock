@@ -88,6 +88,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -247,6 +248,7 @@ fun HomeScreen(
     val userFonts by editor.userFonts.collectAsStateWithLifecycle()
     val fontFailed = stringResource(R.string.font_add_failed)
     val context = LocalContext.current
+    val resources by rememberUpdatedState(LocalResources.current)
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let {
             pickingFont = false
@@ -293,7 +295,7 @@ fun HomeScreen(
 
     LaunchedEffect(viewModel) {
         viewModel.noticeEvents.collect { messageRes ->
-            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, resources.getString(messageRes), Toast.LENGTH_SHORT).show()
         }
     }
 
