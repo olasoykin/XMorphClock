@@ -8,12 +8,14 @@ import com.drdisagree.xmorphclock.data.source.XposedServiceSource
 import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.ClockSettings
 import com.drdisagree.xmorphclock.domain.model.Composition
+import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
-import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.domain.model.ThemeMode
 import com.drdisagree.xmorphclock.domain.repository.SettingsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 class SettingsRepositoryImpl(
@@ -21,11 +23,15 @@ class SettingsRepositoryImpl(
     private val remote: XposedServiceSource
 ) : SettingsRepository {
 
+    private val affordancesState = MutableStateFlow(LockscreenAffordance.defaults())
+
     init {
         remote.addBindListener { push(local.current) }
     }
 
     override val settings: Flow<ClockSettings> = local.settings
+
+    override val availableAffordances: Flow<List<LockscreenAffordance>> = affordancesState.asStateFlow()
 
     override val isOnboardingDone: Boolean
         get() = local.isOnboardingDone
@@ -61,20 +67,30 @@ class SettingsRepositoryImpl(
         local.setOnboardingDone(done)
     }
 
-    override suspend fun setShortcut(slot: ShortcutSlot, shortcut: SystemShortcut) = withContext(Dispatchers.IO) {
-        local.setShortcut(slot, shortcut)
+    override suspend fun setShortcut(slot: ShortcutSlot, affordanceId: String) = withContext(Dispatchers.IO) {
+        val stamp = local.setShortcut(slot, affordanceId)
         val key = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT else PrefKeys.SHORTCUT_RIGHT
-        remote.edit { it.putString(key, shortcut.id) }
-        SystemShortcutController.apply(slot, shortcut)
+        val stampKey = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT_STAMP else PrefKeys.SHORTCUT_RIGHT_STAMP
+        remote.edit {
+            it.putString(key, affordanceId)
+            it.putLong(stampKey, stamp)
+        }
+        SystemShortcutController.apply(slot, affordanceId)
         Unit
     }
 
     override suspend fun syncSystemShortcuts() = withContext(Dispatchers.IO) {
-        if (local.hasConfiguredShortcuts) return@withContext
+        SystemShortcutController.readAvailableAffordances()?.let { affordances ->
+            affordancesState.value = affordances
+        }
         val systemSelections = SystemShortcutController.readSelections() ?: return@withContext
-        systemSelections[ShortcutSlot.LEFT]?.let { local.setShortcut(ShortcutSlot.LEFT, it) }
-        systemSelections[ShortcutSlot.RIGHT]?.let { local.setShortcut(ShortcutSlot.RIGHT, it) }
-        Unit
+        val left = systemSelections[ShortcutSlot.LEFT]
+        val right = systemSelections[ShortcutSlot.RIGHT]
+        local.syncShortcuts(left, right)
+        remote.edit { editor ->
+            left?.let { editor.putString(PrefKeys.SHORTCUT_LEFT, it) }
+            right?.let { editor.putString(PrefKeys.SHORTCUT_RIGHT, it) }
+        }
     }
 
     private fun push(settings: ClockSettings) {
@@ -86,6 +102,8 @@ class SettingsRepositoryImpl(
             if (local.hasConfiguredShortcuts) {
                 it.putString(PrefKeys.SHORTCUT_LEFT, settings.shortcutLeft)
                 it.putString(PrefKeys.SHORTCUT_RIGHT, settings.shortcutRight)
+                it.putLong(PrefKeys.SHORTCUT_LEFT_STAMP, local.shortcutLeftStamp)
+                it.putLong(PrefKeys.SHORTCUT_RIGHT_STAMP, local.shortcutRightStamp)
             }
         }
     }

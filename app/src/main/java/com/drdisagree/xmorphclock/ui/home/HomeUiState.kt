@@ -8,6 +8,7 @@ import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.FaceKind
 import com.drdisagree.xmorphclock.domain.model.FacePreset
+import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ModuleStatus
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
 import com.drdisagree.xmorphclock.domain.model.SystemShortcut
@@ -27,8 +28,9 @@ data class HomeUiState(
     val selectedItem: Int? = null,
     val focusedLayer: String? = null,
     val dragging: Boolean = false,
-    val shortcutLeft: SystemShortcut = SystemShortcut.DEFAULT_LEFT,
-    val shortcutRight: SystemShortcut = SystemShortcut.DEFAULT_RIGHT,
+    val availableAffordances: List<LockscreenAffordance> = LockscreenAffordance.defaults(),
+    val shortcutLeft: LockscreenAffordance = LockscreenAffordance(SystemShortcut.DEFAULT_LEFT.id),
+    val shortcutRight: LockscreenAffordance = LockscreenAffordance(SystemShortcut.DEFAULT_RIGHT.id),
     val activeShortcutSlot: ShortcutSlot = ShortcutSlot.LEFT
 ) {
     val clockPreset: FacePreset?

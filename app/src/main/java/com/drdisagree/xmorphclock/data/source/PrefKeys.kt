@@ -31,6 +31,8 @@ object PrefKeys {
     const val WEATHER_STATUS = "weather_status"
     const val SHORTCUT_LEFT = "shortcut_left"
     const val SHORTCUT_RIGHT = "shortcut_right"
+    const val SHORTCUT_LEFT_STAMP = "shortcut_left_stamp"
+    const val SHORTCUT_RIGHT_STAMP = "shortcut_right_stamp"
     const val DEFAULT_CLOCK_ENABLED = true
     const val DEFAULT_BURN_IN = true
 }

@@ -73,10 +73,12 @@ import com.drdisagree.xmorphclock.domain.editor.WidgetGrids
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
+import com.drdisagree.xmorphclock.domain.model.ItemState
+import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
 import com.drdisagree.xmorphclock.domain.model.SnapResult
-import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.ui.components.AppIcon
+import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.theme.Accent
 import com.drdisagree.xmorphclock.ui.theme.OnInk
 import kotlin.math.abs
@@ -90,19 +92,20 @@ fun BoxScope.ItemOverlay(
     inlineWidgetIds: Set<Int>,
     activeTarget: LockTarget?,
     activeShortcutSlot: ShortcutSlot,
-    shortcutLeft: SystemShortcut,
-    shortcutRight: SystemShortcut,
+    shortcutLeft: LockscreenAffordance,
+    shortcutRight: LockscreenAffordance,
     isAod: Boolean,
     unit: Float,
     frameLeft: Float,
     frameTop: Float,
     width: Float,
     height: Float,
+    settled: Boolean = true,
     onSelectTarget: (LockTarget?, ShortcutSlot?) -> Unit,
     onDrag: (Map<LockTarget, Pair<Float, Float>>, Boolean, Boolean) -> Unit,
     onDragEnd: () -> Unit,
     onToggleWidgetsPosition: () -> Unit,
-    onMeasured: (Map<Int, ItemBounds>, Float) -> Unit
+    onMeasured: (Map<Int, ItemBounds>, Float, Map<ItemState, Float>) -> Unit
 ) {
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
@@ -156,7 +159,36 @@ fun BoxScope.ItemOverlay(
     )
     val safeBottomPx = (shortcutRowTop - slotGap).coerceAtLeast(edgePadPx)
     val maxY = if (unit > 0f) (safeBottomPx - frameTop) / unit else 0f
-    LaunchedEffect(itemBounds, maxY) { onMeasured(itemBounds, maxY) }
+    val geometry = LocalClockGeometry.current
+    val maxYByState = remember(geometry, width, height, safeBottomPx) {
+        if (width <= 0f || height <= 0f) {
+            emptyMap()
+        } else {
+            val largeFrame = geometry.frame(1f)
+            val smallFrame = geometry.frame(0f)
+            val largeUnit = width * largeFrame.width
+            val smallUnit = width * smallFrame.width
+            val largeTop = height * largeFrame.top
+            val smallTop = height * smallFrame.top
+            buildMap {
+                if (largeUnit > 0f) {
+                    val largeMax = (safeBottomPx - largeTop) / largeUnit
+                    put(ItemState.LARGE, largeMax)
+                    put(ItemState.AOD_LARGE, largeMax)
+                }
+                if (smallUnit > 0f) {
+                    val smallMax = (safeBottomPx - smallTop) / smallUnit
+                    put(ItemState.SMALL, smallMax)
+                    put(ItemState.AOD_SMALL, smallMax)
+                }
+            }
+        }
+    }
+    LaunchedEffect(settled, itemBounds, maxY, maxYByState) {
+        if (settled && itemBounds.isNotEmpty()) {
+            onMeasured(itemBounds, maxY, maxYByState)
+        }
+    }
 
     val clockRaw = clockLayers.values.union()
     val gridRaw = gridLayers.values.union()
@@ -485,14 +517,14 @@ fun BoxScope.ItemOverlay(
 @Composable
 private fun LockscreenShortcutOrb(
     rect: RectF,
-    shortcut: SystemShortcut,
+    shortcut: LockscreenAffordance,
     slotLabel: String,
     selected: Boolean,
     tag: String
 ) {
     val density = LocalDensity.current
-    val isEmpty = shortcut == SystemShortcut.NONE
-    val shortcutName = stringResource(shortcut.labelRes)
+    val isEmpty = shortcut.isNone
+    val shortcutName = affordanceLabel(shortcut)
     val fillColor by animateColorAsState(
         when {
             selected -> MaterialTheme.colorScheme.primaryContainer

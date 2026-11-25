@@ -62,6 +62,7 @@ import com.drdisagree.xmorphclock.domain.usecase.ImportImageUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ImportPresetsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ComposePresetPreviewsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveAppliedFaceUseCase
+import com.drdisagree.xmorphclock.domain.usecase.ObserveAvailableAffordancesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveDepthModelUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveDepthSettingsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveDepthStatusUseCase
@@ -211,6 +212,7 @@ class AppContainer(context: Context) {
     val setOnboardingDone = SetOnboardingDoneUseCase(settingsRepository)
     val setLockscreenShortcut = SetLockscreenShortcutUseCase(settingsRepository)
     val syncLockscreenShortcuts = SyncLockscreenShortcutsUseCase(settingsRepository)
+    val observeAvailableAffordances = ObserveAvailableAffordancesUseCase(settingsRepository)
     val exportPresets = ExportPresetsUseCase(presetTransferRepository)
     val readPresetFile = ReadPresetFileUseCase(presetTransferRepository)
     val importPresets = ImportPresetsUseCase(presetTransferRepository)

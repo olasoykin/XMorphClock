@@ -2,17 +2,25 @@ package com.drdisagree.xmorphclock.domain.editor
 
 import android.graphics.RectF
 import com.drdisagree.xmorphclock.domain.model.ClockFace
+import com.drdisagree.xmorphclock.domain.model.ColumnNode
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
+import com.drdisagree.xmorphclock.domain.model.FaceLayer
+import com.drdisagree.xmorphclock.domain.model.FaceLayerType
+import com.drdisagree.xmorphclock.domain.model.FaceNode
 import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
 import com.drdisagree.xmorphclock.domain.model.ItemState
+import com.drdisagree.xmorphclock.domain.model.LayerNode
+import com.drdisagree.xmorphclock.domain.model.RowNode
 import com.drdisagree.xmorphclock.domain.model.StackNode
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 
 enum class LockTarget {
     CLOCK,
@@ -122,7 +130,9 @@ object WidgetGrids {
                     rowHeight = rowH,
                     minTop = MIN_TOP,
                     maxBottom = maxBottom,
-                    forbidden = forbidden
+                    forbidden = forbidden,
+                    preferBelow = if (overrideCenter == null) !widgetsAbove else null,
+                    clockSpan = if (overrideCenter == null) clockSpan else null
                 )
 
                 var cursor = centerX - totalW / 2f
@@ -165,7 +175,9 @@ object WidgetGrids {
                     rowHeight = rowH,
                     minTop = MIN_TOP,
                     maxBottom = maxBottom,
-                    forbidden = forbidden
+                    forbidden = forbidden,
+                    preferBelow = if (overrideCenter == null) !widgetsAbove else null,
+                    clockSpan = if (overrideCenter == null) clockSpan else null
                 )
 
                 val desiredCenterX = if (overrideCenter != null) overrideCenter.x else if (centerHorizontally) 0.5f else (existingOrigin?.x ?: 0.5f)
@@ -182,6 +194,162 @@ object WidgetGrids {
                 applyZonePlacements(composition, itemState, placements)
             }
         }
+    }
+
+    fun ensureClockClearanceForWidgets(
+        composition: Composition,
+        itemState: ItemState,
+        faceOf: (Int) -> ClockFace?,
+        clockBounds: ItemBounds?,
+        maxY: Float = DEFAULT_BOTTOM
+    ): Pair<Composition, ItemBounds?> {
+        val clock = clockBounds ?: return composition to null
+        val clockItem = composition.clockItem ?: return composition to clock
+        val grid = gridItems(composition, faceOf)
+        val inline = inlineItems(composition, faceOf)
+        if (grid.isEmpty() && inline.isEmpty()) return composition to clock
+
+        val zoneGap = GRID_GAP
+        val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+        val rowHGrid = if (grid.isNotEmpty()) grid.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(FaceGrid.CELL) else 0f
+        val rowHInline = if (inline.isNotEmpty()) inline.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(INLINE_HEIGHT) else 0f
+        val totalH = rowHGrid + rowHInline + (if (grid.isNotEmpty() && inline.isNotEmpty()) zoneGap else 0f)
+
+        val clockShiftY = if (composition.widgetsAbove) {
+            val spaceAbove = clock.top - MIN_TOP - zoneGap
+            if (spaceAbove < totalH) {
+                val neededShift = totalH - spaceAbove
+                val maxAllowedShift = (maxBottom - clock.bottom - 0.05f).coerceAtLeast(0f)
+                neededShift.coerceIn(0f, maxAllowedShift)
+            } else 0f
+        } else {
+            val spaceBelow = maxBottom - clock.bottom - zoneGap
+            if (spaceBelow < totalH) {
+                val neededShift = totalH - spaceBelow
+                val maxAllowedShift = (clock.top - MIN_TOP).coerceAtLeast(0f)
+                -neededShift.coerceIn(0f, maxAllowedShift)
+            } else 0f
+        }
+
+        if (clockShiftY == 0f) return composition to clock
+        val shifted = applyMovedItems(composition, setOf(clockItem.id), itemState, 0f, clockShiftY) { FacePlacement() }
+        val shiftedBounds = ItemBounds(clock.left, clock.top + clockShiftY, clock.right, clock.bottom + clockShiftY)
+        return shifted to shiftedBounds
+    }
+
+    fun reconcileWidgetsForClock(
+        composition: Composition,
+        clockFace: ClockFace,
+        faceOf: (Int) -> ClockFace?,
+        largeMaxY: Float = DEFAULT_BOTTOM,
+        smallMaxY: Float = DEFAULT_BOTTOM,
+        largeClockBounds: ItemBounds? = null,
+        smallClockBounds: ItemBounds? = null
+    ): Composition {
+        val grid = gridItems(composition, faceOf)
+        val inline = inlineItems(composition, faceOf)
+        if (grid.isEmpty() && inline.isEmpty()) return composition
+
+        var result = composition
+        listOf(ItemState.LARGE to largeMaxY, ItemState.SMALL to smallMaxY).forEach { (state, maxY) ->
+            val rawClock = when (state) {
+                ItemState.LARGE -> largeClockBounds
+                ItemState.SMALL -> smallClockBounds
+                else -> null
+            } ?: estimateClockBounds(clockFace, result.clockItem, state)
+
+            val paddedClock = ItemBounds(
+                rawClock.left - GRID_GAP,
+                rawClock.top - GRID_GAP,
+                rawClock.right + GRID_GAP,
+                rawClock.bottom + GRID_GAP
+            )
+            val gridOverlaps = grid.any { item ->
+                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                overlaps(b, paddedClock)
+            }
+            val inlineOverlaps = inline.any { item ->
+                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                overlaps(b, paddedClock)
+            }
+
+            val needGridLayout = grid.isNotEmpty() && (result.gridDocked || gridOverlaps)
+            val needInlineLayout = inline.isNotEmpty() && (result.inlineDocked || inlineOverlaps)
+            if (!needGridLayout && !needInlineLayout) return@forEach
+
+            val (cleared, clockBounds) = ensureClockClearanceForWidgets(result, state, faceOf, rawClock, maxY)
+            result = cleared
+            val activeClock = clockBounds ?: rawClock
+            if (needGridLayout) {
+                result = layoutZone(
+                    composition = result,
+                    zone = WidgetZone.GRID_1X4,
+                    itemState = state,
+                    faceOf = faceOf,
+                    clockBottomY = activeClock.bottom,
+                    maxY = maxY,
+                    centerHorizontally = result.gridDocked,
+                    clockBounds = activeClock,
+                    widgetsAbove = result.widgetsAbove
+                )
+            }
+            if (needInlineLayout) {
+                result = layoutZone(
+                    composition = result,
+                    zone = WidgetZone.INLINE_1X2,
+                    itemState = state,
+                    faceOf = faceOf,
+                    clockBottomY = activeClock.bottom,
+                    maxY = maxY,
+                    centerHorizontally = result.inlineDocked,
+                    clockBounds = activeClock,
+                    widgetsAbove = result.widgetsAbove
+                )
+            }
+        }
+        return result
+    }
+
+    fun estimateClockBounds(
+        face: ClockFace,
+        clockItem: CompositionItem?,
+        itemState: ItemState
+    ): ItemBounds {
+        val baseNode = when (itemState) {
+            ItemState.LARGE -> face.large
+            ItemState.SMALL -> face.small
+            ItemState.AOD_LARGE -> face.aodLarge ?: face.large
+            ItemState.AOD_SMALL -> face.aodSmall ?: face.small
+        }
+        val scale = clockItem?.scale(itemState) ?: 1f
+        val node = FaceEditor.scaleNode(baseNode, scale)
+        val placement = clockItem?.placement(itemState) ?: node.placement
+        val layersById = face.layers.associateBy { it.id }
+        val box = estimateNode(node, layersById) ?: return ItemBounds.of(placement, 0.5f, 0.25f)
+        val left = when (placement.anchor) {
+            FaceAlign.START -> placement.x
+            FaceAlign.CENTER -> placement.x - box.width / 2f
+            FaceAlign.END -> placement.x - box.width
+        }
+        return ItemBounds(
+            left = left + box.minLeft,
+            top = placement.y + box.minTop,
+            right = left + box.maxRight,
+            bottom = placement.y + box.maxBottom
+        )
+    }
+
+    private fun widgetBoundsOf(
+        item: CompositionItem,
+        state: ItemState,
+        faceOf: (Int) -> ClockFace?
+    ): ItemBounds? {
+        val placement = item.placement(state) ?: return null
+        val face = faceOf(item.style) ?: return null
+        val root = face.large as? StackNode
+        val w = root?.width ?: if (zoneOf(face) == WidgetZone.INLINE_1X2) 0.36f else FaceGrid.width(spanOf(face))
+        val h = heightOf(face)
+        return ItemBounds.of(placement, w, h)
     }
 
     fun flipWidgetsPosition(
@@ -1043,7 +1211,9 @@ object WidgetGrids {
         rowHeight: Float,
         minTop: Float,
         maxBottom: Float,
-        forbidden: List<Pair<Float, Float>>
+        forbidden: List<Pair<Float, Float>>,
+        preferBelow: Boolean? = null,
+        clockSpan: Pair<Float, Float>? = null
     ): Float {
         val absoluteMaxTop = (maxBottom - rowHeight).coerceAtLeast(minTop)
         val merged = forbidden
@@ -1074,7 +1244,15 @@ object WidgetGrids {
 
         val fitting = free.filter { (s, e) -> e - s >= rowHeight - EPS }
         if (fitting.isNotEmpty()) {
-            val bestInterval = fitting.minBy { (s, e) ->
+            val sideFiltered = if (preferBelow != null && clockSpan != null) {
+                fitting.filter { (s, e) ->
+                    if (preferBelow) s >= clockSpan.second - EPS else e <= clockSpan.first + EPS
+                }
+            } else {
+                emptyList()
+            }
+            val pool = sideFiltered.ifEmpty { fitting }
+            val bestInterval = pool.minBy { (s, e) ->
                 val maxAllowedInInterval = (e - rowHeight).coerceAtLeast(s)
                 val clamped = desiredTop.coerceIn(s, maxAllowedInInterval)
                 abs(clamped - desiredTop)
@@ -1185,4 +1363,150 @@ object WidgetGrids {
         val fallback = if (zoneOf(face) == WidgetZone.INLINE_1X2) INLINE_HEIGHT else FaceGrid.CELL
         return root?.height ?: fallback
     }
+
+    private data class EstBox(
+        val width: Float,
+        val height: Float,
+        val minLeft: Float = 0f,
+        val minTop: Float = 0f,
+        val maxRight: Float = width,
+        val maxBottom: Float = height
+    )
+
+    private fun estimateNode(node: FaceNode, layersById: Map<String, FaceLayer>): EstBox? {
+        if (node.placement.hidden) return null
+        return when (node) {
+            is LayerNode -> {
+                if (node.alpha <= 0f) return null
+                val layer = layersById[node.id]
+                val w: Float
+                val h: Float
+                if (layer?.isHand == true) {
+                    w = node.size
+                    h = node.size
+                } else if (layer?.isShape == true) {
+                    w = node.size
+                    h = node.size / layer.aspect.coerceAtLeast(0.05f)
+                } else {
+                    val isSymbol = layer?.isIcon == true || layer?.font?.startsWith("res:symbols") == true
+                    val capRatio = if (isSymbol) 1f else ESTIMATE_CAP_RATIO
+                    val lineHeight = node.lineHeight ?: layer?.lineHeight ?: 1f
+                    val stretch = node.stretch ?: 1f
+                    val stretchX = node.stretchX ?: 1f
+                    val descent = if (layer == null || layer.isTime || layer.isShape) 0f else node.size * ESTIMATE_TEXT_DESCENT
+                    val tracking = node.tracking ?: layer?.tracking ?: 0f
+                    w = estimateWidthRatio(layer, tracking) * stretchX * node.size
+                    h = capRatio * stretch * node.size * lineHeight + descent
+                }
+                EstBox(width = w, height = h)
+            }
+
+            is RowNode -> {
+                val measured = node.children.map { child -> child to estimateNode(child, layersById) }
+                val boxes = measured.mapNotNull { it.second }
+                if (boxes.isEmpty()) return EstBox(0f, 0f)
+                val base = boxes.maxOf { it.height }
+                var x = 0f
+                var minL = Float.MAX_VALUE
+                var maxR = -Float.MAX_VALUE
+                var minT = Float.MAX_VALUE
+                var maxB = -Float.MAX_VALUE
+                measured.forEach { (child, box) ->
+                    val b = box ?: EstBox(0f, 0f)
+                    val childAlign = (child as? LayerNode)?.align ?: node.align
+                    val left = x + child.placement.x
+                    val top = crossOffset(childAlign, base, b.height) + child.placement.y
+                    minL = min(minL, left + b.minLeft)
+                    maxR = max(maxR, left + b.maxRight)
+                    minT = min(minT, top + b.minTop)
+                    maxB = max(maxB, top + b.maxBottom)
+                    x += b.width + node.gap
+                }
+                EstBox(maxR - minL, maxB - minT, 0f, 0f, maxR - minL, maxB - minT)
+            }
+
+            is ColumnNode -> {
+                val measured = node.children.map { child -> child to estimateNode(child, layersById) }
+                val boxes = measured.mapNotNull { it.second }
+                if (boxes.isEmpty()) return EstBox(0f, 0f)
+                val base = boxes.maxOf { it.width }
+                var y = 0f
+                var minL = Float.MAX_VALUE
+                var maxR = -Float.MAX_VALUE
+                var minT = Float.MAX_VALUE
+                var maxB = -Float.MAX_VALUE
+                measured.forEach { (child, box) ->
+                    val b = box ?: EstBox(0f, 0f)
+                    val childAlign = (child as? LayerNode)?.align ?: node.align
+                    val left = crossOffset(childAlign, base, b.width) + child.placement.x
+                    val top = y + child.placement.y
+                    minL = min(minL, left + b.minLeft)
+                    maxR = max(maxR, left + b.maxRight)
+                    minT = min(minT, top + b.minTop)
+                    maxB = max(maxB, top + b.maxBottom)
+                    y += b.height + node.gap
+                }
+                EstBox(maxR - minL, maxB - minT, 0f, 0f, maxR - minL, maxB - minT)
+            }
+
+            is StackNode -> if (node.width != null) {
+                val h = node.height ?: (node.children.mapNotNull { estimateNode(it, layersById)?.height }.maxOrNull() ?: 0f)
+                EstBox(node.width, h)
+            } else {
+                var minL = Float.MAX_VALUE
+                var minT = Float.MAX_VALUE
+                var maxR = -Float.MAX_VALUE
+                var maxB = -Float.MAX_VALUE
+                var any = false
+                node.children.forEach { child ->
+                    val b = estimateNode(child, layersById) ?: return@forEach
+                    val anchor = child.placement.x
+                    val left = when (child.placement.anchor) {
+                        FaceAlign.START -> anchor
+                        FaceAlign.CENTER -> anchor - b.width / 2f
+                        FaceAlign.END -> anchor - b.width
+                    }
+                    val top = child.placement.y
+                    minL = min(minL, left + b.minLeft)
+                    minT = min(minT, top + b.minTop)
+                    maxR = max(maxR, left + b.maxRight)
+                    maxB = max(maxB, top + b.maxBottom)
+                    any = true
+                }
+                if (!any) EstBox(0f, 0f) else EstBox(
+                    width = max(maxR, 0f),
+                    height = max(maxB, 0f),
+                    minLeft = minL,
+                    minTop = minT,
+                    maxRight = maxR,
+                    maxBottom = maxB
+                )
+            }
+        }
+    }
+
+    private fun estimateWidthRatio(layer: FaceLayer?, tracking: Float): Float {
+        if (layer == null) return 1.2f
+        val chars = when (layer.type) {
+            FaceLayerType.HOURS, FaceLayerType.MINUTES -> 2
+            FaceLayerType.TIME -> 5
+            FaceLayerType.HOUR_TENS, FaceLayerType.HOUR_ONES,
+            FaceLayerType.MINUTE_TENS, FaceLayerType.MINUTE_ONES,
+            FaceLayerType.COLON -> 1
+            FaceLayerType.DATE -> layer.format.length.coerceIn(4, 12)
+            FaceLayerType.TEXT -> layer.format.length.coerceIn(1, 14)
+            else -> 4
+        }
+        val perChar = if (layer.isTime) 0.62f else 0.56f
+        return (chars * perChar + (chars - 1).coerceAtLeast(0) * tracking).coerceAtLeast(0.3f)
+    }
+
+    private fun crossOffset(align: FaceAlign, container: Float, child: Float): Float = when (align) {
+        FaceAlign.START -> 0f
+        FaceAlign.CENTER -> (container - child) / 2f
+        FaceAlign.END -> container - child
+    }
+
+    private const val ESTIMATE_CAP_RATIO = 0.82f
+    private const val ESTIMATE_TEXT_DESCENT = 0.24f
 }

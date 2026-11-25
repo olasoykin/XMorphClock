@@ -78,6 +78,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
@@ -115,9 +116,9 @@ import com.drdisagree.xmorphclock.domain.model.ElementKind
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.domain.model.ItemState
+import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ModuleStatus
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
-import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.ui.components.AppIcon
 import com.drdisagree.xmorphclock.ui.components.ClockFacePreview
@@ -683,6 +684,9 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
     }
     val large by animateFloatAsState(if (showLarge) 1f else 0f, spec, label = "large")
     val sleep by animateFloatAsState(if (state.previewMode == PreviewMode.AOD) 1f else 0f, spec, label = "sleep")
+    val settled = !state.dragging &&
+        large == (if (showLarge) 1f else 0f) &&
+        sleep == (if (state.previewMode == PreviewMode.AOD) 1f else 0f)
     var extents by remember { mutableStateOf(emptyMap<String, RectF>()) }
     val gridIds = remember(state.gridWidgets) { state.gridWidgets.mapTo(HashSet()) { it.id } }
     val inlineIds = remember(state.inlineWidgets) { state.inlineWidgets.mapTo(HashSet()) { it.id } }
@@ -712,13 +716,16 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                     frameTop = constraints.maxHeight * frame.top,
                     width = constraints.maxWidth.toFloat(),
                     height = constraints.maxHeight.toFloat(),
+                    settled = settled,
                     onSelectTarget = viewModel::onTargetSelected,
                     onDrag = { deltas, gridDocked, inlineDocked ->
                         viewModel.onTargetsDrag(itemState, deltas, gridDocked, inlineDocked)
                     },
                     onDragEnd = viewModel::onTargetDragEnd,
                     onToggleWidgetsPosition = viewModel::onToggleWidgetsPosition,
-                    onMeasured = { bounds, maxY -> viewModel.onItemsMeasured(itemState, bounds, maxY) }
+                    onMeasured = { bounds, maxY, maxYByState ->
+                        viewModel.onItemsMeasured(itemState, bounds, maxY, maxYByState)
+                    }
                 )
             }
         }
@@ -998,7 +1005,7 @@ private fun TargetCustomizationSheet(
     onLongPress: (FacePreset) -> Unit,
     onEditItem: (Int?) -> Unit,
     onShortcutSlotSelected: (ShortcutSlot) -> Unit,
-    onShortcutSelected: (ShortcutSlot, SystemShortcut) -> Unit
+    onShortcutSelected: (ShortcutSlot, String) -> Unit
 ) {
     val target = state.activeTarget ?: return
     val density = LocalDensity.current
@@ -1126,8 +1133,9 @@ private fun TargetCustomizationSheet(
                         state.shortcutRight
                     }
                     ShortcutsSheetBody(
+                        affordances = state.availableAffordances,
                         currentShortcut = currentSelected,
-                        onSelect = { shortcut -> onShortcutSelected(state.activeShortcutSlot, shortcut) }
+                        onSelect = { affordanceId -> onShortcutSelected(state.activeShortcutSlot, affordanceId) }
                     )
                 }
             }
@@ -1253,8 +1261,8 @@ private fun WidgetSheetHeader(
 @Composable
 private fun ShortcutsSheetHeader(
     activeSlot: ShortcutSlot,
-    leftShortcut: SystemShortcut,
-    rightShortcut: SystemShortcut,
+    leftShortcut: LockscreenAffordance,
+    rightShortcut: LockscreenAffordance,
     onSlotSelected: (ShortcutSlot) -> Unit
 ) {
     Column(
@@ -1332,7 +1340,7 @@ private fun ShortcutsSheetHeader(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = stringResource(shortcut.labelRes),
+                                    text = affordanceLabel(shortcut),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = contentColor.copy(alpha = 0.78f),
                                     maxLines = 1,
@@ -1349,16 +1357,19 @@ private fun ShortcutsSheetHeader(
 
 @Composable
 private fun ShortcutsSheetBody(
-    currentShortcut: SystemShortcut,
-    onSelect: (SystemShortcut) -> Unit
+    affordances: List<LockscreenAffordance>,
+    currentShortcut: LockscreenAffordance,
+    onSelect: (String) -> Unit
 ) {
+    val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(SystemShortcut.entries, key = { it.id }) { shortcut ->
-            val isSelected = shortcut == currentShortcut
+        items(affordances, key = { it.id }) { affordance ->
+            val isSelected = affordance.id.equals(currentShortcut.id, ignoreCase = true)
+            val isEnabled = affordance.isEnabled
             val interaction = remember { MutableInteractionSource() }
             val shape = expressivePillShape(interaction, restCorner = 22.dp, pressedCorner = 14.dp)
             val containerColor by animateColorAsState(
@@ -1381,8 +1392,16 @@ private fun ShortcutsSheetBody(
                 tween(200),
                 label = "shortcutIconFg"
             )
+            val explanation = affordance.explanation?.takeIf { it.isNotBlank() }
             Surface(
-                onClick = { onSelect(shortcut) },
+                onClick = {
+                    if (isEnabled) {
+                        onSelect(affordance.id)
+                    } else if (explanation != null) {
+                        Toast.makeText(context, explanation, Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled = isEnabled || explanation != null,
                 shape = shape,
                 color = containerColor,
                 contentColor = contentColor,
@@ -1390,11 +1409,12 @@ private fun ShortcutsSheetBody(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
+                    .alpha(if (isEnabled) 1f else 0.55f)
                     .semantics {
                         selected = isSelected
                         role = Role.RadioButton
                     }
-                    .testTag("shortcut_option_${shortcut.id}")
+                    .testTag("shortcut_option_${affordance.id}")
             ) {
                 Row(
                     modifier = Modifier
@@ -1411,19 +1431,32 @@ private fun ShortcutsSheetBody(
                         contentAlignment = Alignment.Center
                     ) {
                         AppIcon(
-                            icon = shortcut.iconRes,
+                            icon = affordance.iconRes,
                             tint = iconTint,
                             size = 20.dp
                         )
                     }
-                    Text(
-                        text = stringResource(shortcut.labelRes),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = contentColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = affordanceLabel(affordance),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = contentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (!isEnabled && explanation != null) {
+                            Text(
+                                text = explanation,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     if (isSelected) {
                         Box(
                             modifier = Modifier
@@ -1443,6 +1476,12 @@ private fun ShortcutsSheetBody(
             }
         }
     }
+}
+
+@Composable
+internal fun affordanceLabel(affordance: LockscreenAffordance): String {
+    val fallback = affordance.knownShortcut?.let { stringResource(it.labelRes) }
+    return affordance.displayLabel(fallback)
 }
 
 @Composable

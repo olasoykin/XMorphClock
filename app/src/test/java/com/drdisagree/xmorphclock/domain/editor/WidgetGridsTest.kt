@@ -1,12 +1,16 @@
 package com.drdisagree.xmorphclock.domain.editor
 
 import com.drdisagree.xmorphclock.domain.model.ClockFace
+import com.drdisagree.xmorphclock.domain.model.ColumnNode
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
+import com.drdisagree.xmorphclock.domain.model.FaceLayer
+import com.drdisagree.xmorphclock.domain.model.FaceLayerType
 import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.LayerNode
+import com.drdisagree.xmorphclock.domain.model.RowNode
 import com.drdisagree.xmorphclock.domain.model.StackNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -491,6 +495,142 @@ class WidgetGridsTest {
         assertTrue(result.attachedEvent)
         // Widget should only move by the incremental step (0.02f), not teleport by 0.27f
         assertEquals(0.02f, result.deltas.getValue(LockTarget.WIDGET_GRID).second, 1e-4f)
+    }
+
+    @Test
+    fun estimateClockBoundsReflectsTallStackedClockAndCompactSmallClock() {
+        val stackedClock = tallStackedClockFace()
+        val largeBounds = WidgetGrids.estimateClockBounds(stackedClock, null, ItemState.LARGE)
+        val smallBounds = WidgetGrids.estimateClockBounds(stackedClock, null, ItemState.SMALL)
+
+        assertTrue("Tall stacked large clock should exceed 0.8f height", (largeBounds.bottom - largeBounds.top) > 0.8f)
+        assertTrue("Small clock should remain compact (< 0.4f)", (smallBounds.bottom - smallBounds.top) < 0.4f)
+        assertTrue("Large bottom should exceed small bottom", largeBounds.bottom > smallBounds.bottom + 0.4f)
+    }
+
+    @Test
+    fun layoutZoneStaysOnRequestedSideInsteadOfFlippingOneStateAboveClock() {
+        val w1 = face("W1", category = "small", span = 2)
+        val map = mapOf(100 to w1)
+        // Tall clock leaves plenty of room above, tighter room below (but enough for widget height)
+        val tallClockBounds = ItemBounds(left = 0.1f, top = 0.45f, right = 0.9f, bottom = 1.40f)
+        val comp = Composition(widgetsAbove = false).add(100, null, null)
+
+        val laidOut = WidgetGrids.layoutZone(
+            composition = comp,
+            zone = WidgetZone.GRID_1X4,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBottomY = tallClockBounds.bottom,
+            maxY = 1.75f,
+            centerHorizontally = true,
+            clockBounds = tallClockBounds,
+            widgetsAbove = false
+        )
+
+        val placement = WidgetGrids.gridItems(laidOut) { map[it] }.first().large!!
+        assertTrue("Widget should stay below clock when widgetsAbove=false", placement.y >= tallClockBounds.bottom)
+    }
+
+    @Test
+    fun ensureClockClearanceShiftsTallClockUpWhenSpaceBelowIsTight() {
+        val w1 = face("W1", category = "small", span = 2)
+        val map = mapOf(100 to w1)
+        val comp = Composition(widgetsAbove = false).add(100, null, null)
+        val tightClock = ItemBounds(left = 0.1f, top = 0.45f, right = 0.9f, bottom = 1.45f)
+
+        val (shiftedComp, shiftedBounds) = WidgetGrids.ensureClockClearanceForWidgets(
+            composition = comp,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBounds = tightClock,
+            maxY = 1.60f
+        )
+
+        val movedClock = shiftedComp.clockItem!!.large!!
+        assertTrue("Clock should shift upward to make room below", movedClock.y < 0f)
+        assertTrue("Shifted bounds bottom should drop below original bottom", shiftedBounds!!.bottom < tightClock.bottom)
+    }
+
+    @Test
+    fun reconcileWidgetsForClockMovesWidgetsClearAcrossBothSmallAndLarge() {
+        val tallClock = tallStackedClockFace()
+        val w1 = face("W1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to w1, 200 to in1)
+
+        // Start with widgets placed below a short clock (overlapping tallClock.large)
+        val comp = Composition(gridDocked = true, inlineDocked = true, widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 0.50f), small = FacePlacement(0.5f, 0.35f))
+            .add(200, large = FacePlacement(0.5f, 0.72f), small = FacePlacement(0.5f, 0.55f))
+
+        val reconciled = WidgetGrids.reconcileWidgetsForClock(
+            composition = comp,
+            clockFace = tallClock,
+            faceOf = { map[it] },
+            largeMaxY = 1.75f,
+            smallMaxY = 1.75f
+        )
+
+        val largeClock = WidgetGrids.estimateClockBounds(tallClock, reconciled.clockItem, ItemState.LARGE)
+        val smallClock = WidgetGrids.estimateClockBounds(tallClock, reconciled.clockItem, ItemState.SMALL)
+        val grid = WidgetGrids.gridItems(reconciled) { map[it] }.first()
+        val inline = WidgetGrids.inlineItems(reconciled) { map[it] }.first()
+
+        assertTrue("LARGE grid must stay below tall LARGE clock", grid.large!!.y > largeClock.bottom)
+        assertTrue("LARGE inline must stay below LARGE grid", inline.large!!.y > grid.large.y)
+        assertTrue("SMALL grid must stay below SMALL clock", grid.small!!.y > smallClock.bottom)
+        assertTrue("SMALL inline must stay below SMALL grid", inline.small!!.y > grid.small.y)
+    }
+
+    @Test
+    fun reconcileWidgetsForClockPreservesNonOverlappingUndockedSmallWhileFixingLargeOverlap() {
+        val tallClock = tallStackedClockFace()
+        val w1 = face("W1", category = "small", span = 2)
+        val map = mapOf(100 to w1)
+
+        // User dragged widget in SMALL to y=0.90 (far below small clock), while LARGE overlaps tallClock
+        val comp = Composition(gridDocked = false, inlineDocked = false, widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 0.60f), small = FacePlacement(0.32f, 0.90f))
+
+        val reconciled = WidgetGrids.reconcileWidgetsForClock(
+            composition = comp,
+            clockFace = tallClock,
+            faceOf = { map[it] },
+            largeMaxY = 1.75f,
+            smallMaxY = 1.75f
+        )
+
+        val largeClock = WidgetGrids.estimateClockBounds(tallClock, reconciled.clockItem, ItemState.LARGE)
+        val grid = WidgetGrids.gridItems(reconciled) { map[it] }.first()
+
+        assertTrue("Overlapping LARGE widget must be moved clear of tall clock", grid.large!!.y > largeClock.bottom)
+        assertEquals(0.32f, grid.small!!.x, 1e-4f)
+        assertEquals(0.90f, grid.small.y, 1e-4f)
+    }
+
+    private fun tallStackedClockFace(): ClockFace {
+        val layers = listOf(
+            FaceLayer("hours", FaceLayerType.HOURS),
+            FaceLayer("minutes", FaceLayerType.MINUTES)
+        )
+        val large = ColumnNode(
+            gap = 0.04f,
+            placement = FacePlacement(0.5f, 0.12f, FaceAlign.CENTER),
+            children = listOf(
+                LayerNode("hours", size = 0.56f),
+                LayerNode("minutes", size = 0.56f)
+            )
+        )
+        val small = RowNode(
+            gap = 0.02f,
+            placement = FacePlacement(0.5f, 0.05f, FaceAlign.CENTER),
+            children = listOf(
+                LayerNode("hours", size = 0.24f),
+                LayerNode("minutes", size = 0.24f)
+            )
+        )
+        return ClockFace(name = "Tall", layers = layers, large = large, small = small)
     }
 
     private fun shift(b: ItemBounds, delta: Pair<Float, Float>): ItemBounds =

@@ -8,7 +8,8 @@ object SystemShortcutController {
 
     private const val SELECTIONS_URI = "content://com.android.systemui.customization/lockscreen_quickaffordance/selections"
     private const val AFFORDANCES_URI = "content://com.android.systemui.customization/lockscreen_quickaffordance/affordances"
-    private val SELECTION_ROW_REGEX = Regex("""slot_id=([^,\s]+).*?affordance_id=([^,\s]+)""")
+    private val SLOT_ID_REGEX = Regex("""slot_id=([^,\s]+)""")
+    private val AFFORDANCE_ID_REGEX = Regex("""affordance_id=([^,\s]+)""")
     private val AFFORDANCE_ROW_REGEX = Regex(
         """id=([^,]+),\s*name=(.*?),\s*is_enabled=([^,\s]+)(?:,\s*enablement_explanation=(.*?)(?:,\s*enablement_action_text=|$))?"""
     )
@@ -18,7 +19,8 @@ object SystemShortcutController {
         // AOSP CustomizationProvider.delete requires selectionArgs which `content delete` CLI cannot pass;
         // `insert` replaces the slot selection directly, while clearing (NONE) is handled by LockscreenShortcutsHook via ContentResolver.
         if (affordanceId.equals(SystemShortcut.NONE.id, ignoreCase = true)) return false
-        val insertCmd = "content insert --uri $SELECTIONS_URI --bind slot_id:s:${slot.systemSlotId} --bind affordance_id:s:$affordanceId"
+        val safeAffordance = affordanceId.replace("'", "'\\''")
+        val insertCmd = "content insert --uri $SELECTIONS_URI --bind slot_id:s:${slot.systemSlotId} --bind affordance_id:s:'$safeAffordance'"
         return RootShell.run(insertCmd)
     }
 
@@ -38,9 +40,11 @@ object SystemShortcutController {
         }
         val parsed = HashMap<ShortcutSlot, String>(2)
         raw.lineSequence().forEach { line ->
-            val match = SELECTION_ROW_REGEX.find(line) ?: return@forEach
-            val slot = ShortcutSlot.entries.firstOrNull { it.systemSlotId == match.groupValues[1] } ?: return@forEach
-            val affordanceId = match.groupValues[2].trim().takeIf { it.isNotEmpty() } ?: return@forEach
+            val slotRaw = SLOT_ID_REGEX.find(line)?.groupValues?.get(1)?.trim() ?: return@forEach
+            val slot = ShortcutSlot.entries.firstOrNull { it.systemSlotId == slotRaw } ?: return@forEach
+            val affordanceId = AFFORDANCE_ID_REGEX.find(line)?.groupValues?.get(1)?.trim()
+                ?.takeIf { it.isNotEmpty() && !it.equals("NULL", ignoreCase = true) }
+                ?: return@forEach
             parsed[slot] = affordanceId
         }
         if (parsed.isEmpty()) return null
@@ -64,7 +68,9 @@ object SystemShortcutController {
         raw.lineSequence().forEach { line ->
             val match = AFFORDANCE_ROW_REGEX.find(line) ?: return@forEach
             val id = match.groupValues[1].trim()
-            if (id.isEmpty() || id.equals(SystemShortcut.NONE.id, ignoreCase = true)) return@forEach
+            if (id.isEmpty() || id.equals("NULL", ignoreCase = true) || id.equals(SystemShortcut.NONE.id, ignoreCase = true)) {
+                return@forEach
+            }
             val name = match.groupValues[2].trim().takeUnless { it.equals("NULL", ignoreCase = true) || it.isEmpty() }
             val enabledRaw = match.groupValues[3].trim()
             val isEnabled = enabledRaw != "0" && !enabledRaw.equals("false", ignoreCase = true)

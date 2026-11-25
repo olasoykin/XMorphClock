@@ -48,8 +48,26 @@ data class LockscreenAffordance(
         get() = SystemShortcut.fromId(id)
 
     val iconRes: Int
-        get() = knownShortcut?.iconRes ?: R.drawable.ic_lock_open
+        get() = knownShortcut?.iconRes ?: when (id.trim().lowercase()) {
+            "create_note", "note" -> R.drawable.ic_document
+            "dnd" -> R.drawable.ic_shortcut_dnd
+            "device_controls", "controls" -> R.drawable.ic_shortcut_home
+            "qr_scanner" -> R.drawable.ic_shortcut_qr
+            else -> R.drawable.ic_lock_open
+        }
 
     val isNone: Boolean
         get() = id.equals(SystemShortcut.NONE.id, ignoreCase = true)
+
+    fun displayLabel(fallbackLabel: String?): String =
+        name?.takeIf { it.isNotBlank() }
+            ?: fallbackLabel
+            ?: id.replace('_', ' ').replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase() else it.toString()
+            }
+
+    companion object {
+        fun defaults(): List<LockscreenAffordance> =
+            SystemShortcut.entries.map { LockscreenAffordance(id = it.id) }
+    }
 }

@@ -77,9 +77,28 @@ class LocalPrefsSource(context: Context) {
         prefs.edit { putBoolean(PrefKeys.ONBOARDING_DONE, done) }
     }
 
-    fun setShortcut(slot: ShortcutSlot, affordanceId: String) {
+    val shortcutLeftStamp: Long
+        get() = prefs.getLong(PrefKeys.SHORTCUT_LEFT_STAMP, 0L)
+
+    val shortcutRightStamp: Long
+        get() = prefs.getLong(PrefKeys.SHORTCUT_RIGHT_STAMP, 0L)
+
+    fun setShortcut(slot: ShortcutSlot, affordanceId: String): Long {
         val key = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT else PrefKeys.SHORTCUT_RIGHT
-        prefs.edit { putString(key, affordanceId) }
+        val stampKey = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT_STAMP else PrefKeys.SHORTCUT_RIGHT_STAMP
+        val nextStamp = maxOf(System.currentTimeMillis(), prefs.getLong(stampKey, 0L) + 1L)
+        prefs.edit {
+            putString(key, affordanceId)
+            putLong(stampKey, nextStamp)
+        }
+        return nextStamp
+    }
+
+    fun syncShortcuts(left: String?, right: String?) {
+        prefs.edit {
+            left?.let { putString(PrefKeys.SHORTCUT_LEFT, it) }
+            right?.let { putString(PrefKeys.SHORTCUT_RIGHT, it) }
+        }
     }
 }
 

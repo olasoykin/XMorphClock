@@ -19,10 +19,10 @@ import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
 import com.drdisagree.xmorphclock.domain.model.ItemState
+import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
 import com.drdisagree.xmorphclock.domain.model.StackNode
 import com.drdisagree.xmorphclock.domain.model.StyleStatus
-import com.drdisagree.xmorphclock.domain.model.SystemShortcut
 import com.drdisagree.xmorphclock.domain.usecase.ApplyClockPresetUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ComposePresetPreviewsUseCase
 import com.drdisagree.xmorphclock.domain.usecase.CreateFaceUseCase
@@ -30,6 +30,7 @@ import com.drdisagree.xmorphclock.domain.usecase.DeletePresetUseCase
 import com.drdisagree.xmorphclock.domain.usecase.DuplicatePresetUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ImportImageUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveAppliedFaceUseCase
+import com.drdisagree.xmorphclock.domain.usecase.ObserveAvailableAffordancesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveFacesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveLiveWallpaperUseCase
 import com.drdisagree.xmorphclock.domain.usecase.ObserveModuleStatusUseCase
@@ -73,7 +74,8 @@ class HomeViewModel(
     private val updateStylePreset: UpdateStylePresetUseCase,
     observeStyleStatus: ObserveStyleStatusUseCase,
     private val setLockscreenShortcut: SetLockscreenShortcutUseCase,
-    syncLockscreenShortcuts: SyncLockscreenShortcutsUseCase
+    private val syncLockscreenShortcuts: SyncLockscreenShortcutsUseCase,
+    observeAvailableAffordances: ObserveAvailableAffordancesUseCase
 ) : ViewModel() {
 
     private val previewMode = MutableStateFlow(PreviewMode.LARGE)
@@ -91,8 +93,8 @@ class HomeViewModel(
     val editEvents: SharedFlow<Unit> = editRequests.asSharedFlow()
     val noticeEvents: SharedFlow<Int> = notices.asSharedFlow()
 
-    private var measuredState: ItemState? = null
-    private var measuredBounds: Map<Int, ItemBounds> = emptyMap()
+    private val measuredSnapshots = HashMap<ItemState, MeasuredSnapshot>()
+    private var screenBottomByState: Map<ItemState, Float> = emptyMap()
     private var screenBottom: Float = DEFAULT_BOTTOM
 
     init {
@@ -137,11 +139,11 @@ class HomeViewModel(
 
     val uiState: StateFlow<HomeUiState> = combine(
         combine(catalog, previews) { faces, composed -> faces to composed },
-        settingsState.filterNotNull(),
+        combine(settingsState.filterNotNull(), observeAvailableAffordances()) { settings, affordances -> settings to affordances },
         observeModuleStatus(),
         observeAppliedFace(draft = effective),
         local
-    ) { (faces, composed), settings, status, preview, current ->
+    ) { (faces, composed), (settings, affordances), status, preview, current ->
         val displayedComposition = draftComposition.value ?: settings.composition
         HomeUiState(
             tab = current.tab,
@@ -158,17 +160,22 @@ class HomeViewModel(
             selectedItem = current.item,
             focusedLayer = current.focus,
             dragging = current.dragging,
-            shortcutLeft = SystemShortcut.resolve(settings.shortcutLeft, SystemShortcut.DEFAULT_LEFT),
-            shortcutRight = SystemShortcut.resolve(settings.shortcutRight, SystemShortcut.DEFAULT_RIGHT),
+            availableAffordances = affordances,
+            shortcutLeft = resolveAffordance(settings.shortcutLeft, affordances),
+            shortcutRight = resolveAffordance(settings.shortcutRight, affordances),
             activeShortcutSlot = current.shortcutSlot
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT), HomeUiState())
+
+    private fun resolveAffordance(id: String, available: List<LockscreenAffordance>): LockscreenAffordance =
+        available.firstOrNull { it.id.equals(id, ignoreCase = true) } ?: LockscreenAffordance(id = id)
 
     fun onTabChange(selected: FaceTab) {
         tab.value = selected
     }
 
     fun onTargetSelected(target: LockTarget?, slot: ShortcutSlot? = null) {
+        val openingShortcuts = target == LockTarget.SHORTCUTS && activeTarget.value != LockTarget.SHORTCUTS
         activeTarget.value = target
         focus.value = null
         slot?.let { shortcutSlot.value = it }
@@ -189,7 +196,14 @@ class HomeViewModel(
                 item.value = state.inlineWidgets.firstOrNull()?.id
             }
 
-            LockTarget.SHORTCUTS, null -> item.value = null
+            LockTarget.SHORTCUTS -> {
+                item.value = null
+                if (openingShortcuts) {
+                    viewModelScope.launch { syncLockscreenShortcuts() }
+                }
+            }
+
+            null -> item.value = null
         }
     }
 
@@ -197,8 +211,8 @@ class HomeViewModel(
         shortcutSlot.value = slot
     }
 
-    fun onShortcutSelected(slot: ShortcutSlot, shortcut: SystemShortcut) {
-        viewModelScope.launch { setLockscreenShortcut(slot, shortcut) }
+    fun onShortcutSelected(slot: ShortcutSlot, affordanceId: String) {
+        viewModelScope.launch { setLockscreenShortcut(slot, affordanceId) }
     }
 
     fun onItemSelected(id: Int?) {
@@ -223,10 +237,23 @@ class HomeViewModel(
         focus.value = layer
     }
 
-    fun onItemsMeasured(state: ItemState, bounds: Map<Int, ItemBounds>, maxY: Float) {
-        measuredState = state
-        measuredBounds = bounds
+    fun onItemsMeasured(
+        state: ItemState,
+        bounds: Map<Int, ItemBounds>,
+        maxY: Float,
+        maxYByState: Map<ItemState, Float> = emptyMap()
+    ) {
         if (maxY > 0f) screenBottom = maxY
+        if (maxYByState.isNotEmpty()) screenBottomByState = maxYByState
+        val current = uiState.value
+        val clock = current.composition.clockItem
+        measuredSnapshots[state] = MeasuredSnapshot(
+            clockStyle = current.clockStyle,
+            clockPlacement = clock?.placement(state),
+            clockScale = clock?.scale(state) ?: 1f,
+            bounds = bounds,
+            maxY = maxY
+        )
     }
 
     fun onTargetDrag(target: LockTarget, itemState: ItemState, dx: Float, dy: Float) {
@@ -287,6 +314,8 @@ class HomeViewModel(
         val nextAbove = !state.composition.widgetsAbove
         val largeClock = clockBoundsOf(state, ItemState.LARGE)
         val smallClock = clockBoundsOf(state, ItemState.SMALL)
+        val largeMaxY = maxYOf(ItemState.LARGE)
+        val smallMaxY = maxYOf(ItemState.SMALL)
         viewModelScope.launch {
             updateComposition { current ->
                 var next = current.copy(widgetsAbove = nextAbove, gridDocked = true, inlineDocked = true)
@@ -296,7 +325,7 @@ class HomeViewModel(
                     itemState = ItemState.LARGE,
                     faceOf = state::faceOf,
                     clockBounds = largeClock,
-                    maxY = screenBottom
+                    maxY = largeMaxY
                 )
                 next = WidgetGrids.flipWidgetsPosition(
                     composition = next,
@@ -304,7 +333,7 @@ class HomeViewModel(
                     itemState = ItemState.SMALL,
                     faceOf = state::faceOf,
                     clockBounds = smallClock,
-                    maxY = screenBottom
+                    maxY = smallMaxY
                 )
                 next
             }
@@ -316,7 +345,11 @@ class HomeViewModel(
         val selected = FaceKind.of(style) ?: return
         viewModelScope.launch {
             if (selected == FaceKind.CLOCK) {
-                applyClockPreset(style)
+                applyClockPreset(
+                    style = style,
+                    largeMaxY = maxYOf(ItemState.LARGE),
+                    smallMaxY = maxYOf(ItemState.SMALL)
+                )
                 return@launch
             }
             val face = state.faceOf(style) ?: return@launch
@@ -333,19 +366,40 @@ class HomeViewModel(
             val newId = state.composition.nextId
             val largeClock = clockBoundsOf(state, ItemState.LARGE)
             val smallClock = clockBoundsOf(state, ItemState.SMALL)
+            val largeMaxY = maxYOf(ItemState.LARGE)
+            val smallMaxY = maxYOf(ItemState.SMALL)
             val largeClockBottom = largeClock?.bottom ?: clockBottomY(state, ItemState.LARGE)
             val smallClockBottom = smallClock?.bottom ?: clockBottomY(state, ItemState.SMALL)
             updateComposition { current ->
                 var next = current.add(style, null, null)
+                val (clearedLarge, effectiveLargeClock) = WidgetGrids.ensureClockClearanceForWidgets(
+                    composition = next,
+                    itemState = ItemState.LARGE,
+                    faceOf = state::faceOf,
+                    clockBounds = largeClock,
+                    maxY = largeMaxY
+                )
+                next = clearedLarge
+                val (clearedSmall, effectiveSmallClock) = WidgetGrids.ensureClockClearanceForWidgets(
+                    composition = next,
+                    itemState = ItemState.SMALL,
+                    faceOf = state::faceOf,
+                    clockBounds = smallClock,
+                    maxY = smallMaxY
+                )
+                next = clearedSmall
+                val effLargeBottom = effectiveLargeClock?.bottom ?: largeClockBottom
+                val effSmallBottom = effectiveSmallClock?.bottom ?: smallClockBottom
+
                 next = WidgetGrids.layoutZone(
                     composition = next,
                     zone = zone,
                     itemState = ItemState.LARGE,
                     faceOf = state::faceOf,
-                    clockBottomY = largeClockBottom,
-                    maxY = screenBottom,
+                    clockBottomY = effLargeBottom,
+                    maxY = largeMaxY,
                     centerHorizontally = true,
-                    clockBounds = largeClock,
+                    clockBounds = effectiveLargeClock,
                     widgetsAbove = current.widgetsAbove
                 )
                 next = WidgetGrids.layoutZone(
@@ -353,10 +407,10 @@ class HomeViewModel(
                     zone = zone,
                     itemState = ItemState.SMALL,
                     faceOf = state::faceOf,
-                    clockBottomY = smallClockBottom,
-                    maxY = screenBottom,
+                    clockBottomY = effSmallBottom,
+                    maxY = smallMaxY,
                     centerHorizontally = true,
-                    clockBounds = smallClock,
+                    clockBounds = effectiveSmallClock,
                     widgetsAbove = current.widgetsAbove
                 )
                 if (zone == WidgetZone.GRID_1X4 && WidgetGrids.inlineItems(next, state::faceOf).isNotEmpty()) {
@@ -365,9 +419,9 @@ class HomeViewModel(
                         zone = WidgetZone.INLINE_1X2,
                         itemState = ItemState.LARGE,
                         faceOf = state::faceOf,
-                        clockBottomY = largeClockBottom,
-                        maxY = screenBottom,
-                        clockBounds = largeClock,
+                        clockBottomY = effLargeBottom,
+                        maxY = largeMaxY,
+                        clockBounds = effectiveLargeClock,
                         widgetsAbove = current.widgetsAbove
                     )
                     next = WidgetGrids.layoutZone(
@@ -375,9 +429,9 @@ class HomeViewModel(
                         zone = WidgetZone.INLINE_1X2,
                         itemState = ItemState.SMALL,
                         faceOf = state::faceOf,
-                        clockBottomY = smallClockBottom,
-                        maxY = screenBottom,
-                        clockBounds = smallClock,
+                        clockBottomY = effSmallBottom,
+                        maxY = smallMaxY,
+                        clockBounds = effectiveSmallClock,
                         widgetsAbove = current.widgetsAbove
                     )
                 }
@@ -401,6 +455,8 @@ class HomeViewModel(
         val zone = face?.let(WidgetGrids::zoneOf) ?: WidgetZone.GRID_1X4
         val largeClock = clockBoundsOf(state, ItemState.LARGE)
         val smallClock = clockBoundsOf(state, ItemState.SMALL)
+        val largeMaxY = maxYOf(ItemState.LARGE)
+        val smallMaxY = maxYOf(ItemState.SMALL)
         val largeClockBottom = largeClock?.bottom ?: clockBottomY(state, ItemState.LARGE)
         val smallClockBottom = smallClock?.bottom ?: clockBottomY(state, ItemState.SMALL)
         updateComposition { current ->
@@ -411,7 +467,7 @@ class HomeViewModel(
                 itemState = ItemState.LARGE,
                 faceOf = state::faceOf,
                 clockBottomY = largeClockBottom,
-                maxY = screenBottom,
+                maxY = largeMaxY,
                 centerHorizontally = true,
                 clockBounds = largeClock,
                 widgetsAbove = current.widgetsAbove
@@ -422,7 +478,7 @@ class HomeViewModel(
                 itemState = ItemState.SMALL,
                 faceOf = state::faceOf,
                 clockBottomY = smallClockBottom,
-                maxY = screenBottom,
+                maxY = smallMaxY,
                 centerHorizontally = true,
                 clockBounds = smallClock,
                 widgetsAbove = current.widgetsAbove
@@ -474,10 +530,22 @@ class HomeViewModel(
         onFaceSelected(style)
     }
 
+    private fun maxYOf(itemState: ItemState): Float =
+        screenBottomByState[itemState] ?: measuredSnapshots[itemState]?.maxY?.takeIf { it > 0f } ?: screenBottom
+
     private fun clockBoundsOf(state: HomeUiState, itemState: ItemState): ItemBounds? {
         val clock = state.composition.clockItem ?: return null
-        if (measuredState == itemState) {
-            measuredBounds[clock.id]?.let { return it }
+        val snapshot = measuredSnapshots[itemState]
+        if (snapshot != null &&
+            snapshot.clockStyle == state.clockStyle &&
+            snapshot.clockPlacement == clock.placement(itemState) &&
+            snapshot.clockScale == clock.scale(itemState)
+        ) {
+            snapshot.bounds[clock.id]?.let { return it }
+        }
+        val face = state.clockPreset?.face
+        if (face != null) {
+            return WidgetGrids.estimateClockBounds(face, clock, itemState)
         }
         return estimate(state, clock, itemState)
     }
@@ -488,10 +556,11 @@ class HomeViewModel(
     }
 
     private fun estimate(state: HomeUiState, target: CompositionItem, itemState: ItemState): ItemBounds? {
-        val large = itemState == ItemState.LARGE
+        val large = itemState == ItemState.LARGE || itemState == ItemState.AOD_LARGE
         val face = (if (target.clock) state.clockPreset?.face else state.faceOf(target.style)) ?: return null
-        val placement = target.placement(itemState) ?: (if (large || !target.clock) face.large.placement else face.small.placement)
-        val (width, height) = if (target.clock) (if (large) CLOCK_LARGE else CLOCK_SMALL) else sizeOf(face, large = true)
+        if (target.clock) return WidgetGrids.estimateClockBounds(face, target, itemState)
+        val placement = target.placement(itemState) ?: face.large.placement
+        val (width, height) = sizeOf(face, large = true)
         return ItemBounds.of(placement, width, height)
     }
 
@@ -546,6 +615,14 @@ class HomeViewModel(
     fun onEditDone() {
         editing.value = null
     }
+
+    private data class MeasuredSnapshot(
+        val clockStyle: Int,
+        val clockPlacement: FacePlacement?,
+        val clockScale: Float,
+        val bounds: Map<Int, ItemBounds>,
+        val maxY: Float
+    )
 
     private data class LocalFocus(
         val target: LockTarget?,

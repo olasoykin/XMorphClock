@@ -15,13 +15,15 @@ import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 object LockscreenShortcutsHook {
 
     private const val HOOK_ID = "lockscreen_shortcuts"
     private const val REPOSITORY_CLASS = "com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository"
     private const val SELECTIONS_URI = "content://com.android.systemui.customization/lockscreen_quickaffordance/selections"
+    private const val STATE_PREFS = "xmorph_shortcuts_state"
+    private const val KEY_APPLIED_LEFT_STAMP = "applied_left_stamp"
+    private const val KEY_APPLIED_RIGHT_STAMP = "applied_right_stamp"
     private const val COL_SLOT_ID = "slot_id"
     private const val COL_AFFORDANCE_ID = "affordance_id"
     private const val RETRY_MS = 1_500L
@@ -31,7 +33,6 @@ object LockscreenShortcutsHook {
     private val worker = Executors.newSingleThreadExecutor { r ->
         Thread(r, "XMorph-Shortcuts").apply { isDaemon = true }
     }
-    private val applying = AtomicBoolean(false)
 
     @Volatile
     private var repoRef: WeakReference<Any>? = null
@@ -40,10 +41,10 @@ object LockscreenShortcutsHook {
     private var setSelectionsMethod: Method? = null
 
     @Volatile
-    private var lastAppliedLeft: String? = null
+    private var memLeftStamp: Long = 0L
 
     @Volatile
-    private var lastAppliedRight: String? = null
+    private var memRightStamp: Long = 0L
 
     fun install() {
         runCatching {
@@ -84,35 +85,59 @@ object LockscreenShortcutsHook {
     }
 
     private fun apply() {
-        if (!applying.compareAndSet(false, true)) return
-        try {
-            HookSafety.runGuarded(HOOK_ID, maxCallsPerSecond = 5, maxConsecutiveErrors = 3) {
-                val left = ModulePrefs.shortcutLeft
-                val right = ModulePrefs.shortcutRight
-                if (left == null && right == null) return@runGuarded
+        HookSafety.runGuarded(HOOK_ID, maxCallsPerSecond = 5, maxConsecutiveErrors = 3) {
+            val left = ModulePrefs.shortcutLeft
+            val leftStamp = ModulePrefs.shortcutLeftStamp
+            val right = ModulePrefs.shortcutRight
+            val rightStamp = ModulePrefs.shortcutRightStamp
 
-                if (left != null && left != lastAppliedLeft) {
-                    if (applySlot(ShortcutSlot.LEFT, left)) {
-                        lastAppliedLeft = left
-                    }
-                }
-                if (right != null && right != lastAppliedRight) {
-                    if (applySlot(ShortcutSlot.RIGHT, right)) {
-                        lastAppliedRight = right
-                    }
+            if (left != null && leftStamp > 0L && leftStamp != appliedStamp(ShortcutSlot.LEFT)) {
+                if (applySlot(ShortcutSlot.LEFT, left)) {
+                    saveAppliedStamp(ShortcutSlot.LEFT, leftStamp)
                 }
             }
-        } finally {
-            applying.set(false)
+            if (right != null && rightStamp > 0L && rightStamp != appliedStamp(ShortcutSlot.RIGHT)) {
+                if (applySlot(ShortcutSlot.RIGHT, right)) {
+                    saveAppliedStamp(ShortcutSlot.RIGHT, rightStamp)
+                }
+            }
+        }
+    }
+
+    private fun appliedStamp(slot: ShortcutSlot): Long {
+        val mem = if (slot == ShortcutSlot.LEFT) memLeftStamp else memRightStamp
+        if (mem > 0L) return mem
+        val key = if (slot == ShortcutSlot.LEFT) KEY_APPLIED_LEFT_STAMP else KEY_APPLIED_RIGHT_STAMP
+        val stored = runCatching {
+            HostApplication.context()
+                ?.getSharedPreferences(STATE_PREFS, android.content.Context.MODE_PRIVATE)
+                ?.getLong(key, 0L)
+        }.getOrNull() ?: 0L
+        if (stored > 0L) {
+            if (slot == ShortcutSlot.LEFT) memLeftStamp = stored else memRightStamp = stored
+        }
+        return stored
+    }
+
+    private fun saveAppliedStamp(slot: ShortcutSlot, stamp: Long) {
+        if (slot == ShortcutSlot.LEFT) memLeftStamp = stamp else memRightStamp = stamp
+        val key = if (slot == ShortcutSlot.LEFT) KEY_APPLIED_LEFT_STAMP else KEY_APPLIED_RIGHT_STAMP
+        runCatching {
+            HostApplication.context()
+                ?.getSharedPreferences(STATE_PREFS, android.content.Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putLong(key, stamp)
+                ?.apply()
         }
     }
 
     private fun applySlot(slot: ShortcutSlot, shortcutId: String): Boolean {
+        val isNone = shortcutId.equals(SystemShortcut.NONE.id, ignoreCase = true)
         val repo = repoRef?.get()
         val method = setSelectionsMethod
         if (repo != null && method != null) {
             val repoResult = runCatching {
-                val ids = if (shortcutId == SystemShortcut.NONE.id) emptyList() else listOf(shortcutId)
+                val ids = if (isNone) emptyList() else listOf(shortcutId)
                 method.invoke(repo, slot.systemSlotId, ids)
             }
             if (repoResult.isSuccess) return true
@@ -123,7 +148,7 @@ object LockscreenShortcutsHook {
         val uri = Uri.parse(SELECTIONS_URI)
         return runCatching {
             deleteSlotSelections(resolver, uri, slot.systemSlotId)
-            if (shortcutId != SystemShortcut.NONE.id) {
+            if (!isNone) {
                 val values = ContentValues().apply {
                     put(COL_SLOT_ID, slot.systemSlotId)
                     put(COL_AFFORDANCE_ID, shortcutId)

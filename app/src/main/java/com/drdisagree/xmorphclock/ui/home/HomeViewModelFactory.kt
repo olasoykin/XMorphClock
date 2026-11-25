@@ -24,7 +24,8 @@ fun homeViewModelFactory(container: AppContainer): ViewModelProvider.Factory = v
             updateStylePreset = container.updateStylePreset,
             observeStyleStatus = container.observeStyleStatus,
             setLockscreenShortcut = container.setLockscreenShortcut,
-            syncLockscreenShortcuts = container.syncLockscreenShortcuts
+            syncLockscreenShortcuts = container.syncLockscreenShortcuts,
+            observeAvailableAffordances = container.observeAvailableAffordances
         )
     }
 }

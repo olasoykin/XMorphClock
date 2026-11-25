@@ -78,6 +78,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -276,6 +277,10 @@ class ClockFaceView(
     private var largeFrames: Map<String, Placement>? = null
     private var aodSmallFrames: Map<String, Placement>? = null
     private var aodLargeFrames: Map<String, Placement>? = null
+    private var transitionWidth = -1f
+    private var transitionProgress = -1f
+    private var transitionPalette = -1
+    private var cachedTransition: TransitionFrames? = null
 
     private val timeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -425,9 +430,22 @@ class ClockFaceView(
 
     private fun measureBottom(width: Float, exclude: Set<String>): Float {
         val (small, large) = frames(width)
-        var bottom = lerp(max(bottomOf(small, exclude), boxBottom(face.small, width)), max(bottomOf(large, exclude), boxBottom(face.large, width)), largeProgress)
+        val transition = resolvedTransition(width)
+        var bottom = if (transition != null) {
+            max(
+                bottomOf(transition.awake, exclude),
+                lerp(boxBottom(face.small, width), boxBottom(face.large, width), largeProgress)
+            )
+        } else {
+            lerp(max(bottomOf(small, exclude), boxBottom(face.small, width)), max(bottomOf(large, exclude), boxBottom(face.large, width)), largeProgress)
+        }
         if (aodSmallFrames != null || aodLargeFrames != null) {
-            bottom = lerp(bottom, lerp(bottomOf(aodSmallFrames ?: small, exclude), bottomOf(aodLargeFrames ?: large, exclude), largeProgress), aodProgress)
+            val asleepBottom = if (transition?.asleep != null) {
+                bottomOf(transition.asleep, exclude)
+            } else {
+                lerp(bottomOf(aodSmallFrames ?: small, exclude), bottomOf(aodLargeFrames ?: large, exclude), largeProgress)
+            }
+            bottom = lerp(bottom, asleepBottom, aodProgress)
         }
         if (morphFrom != null) {
             face.layers.forEachIndexed { index, layer ->
@@ -1638,11 +1656,20 @@ class ClockFaceView(
     private fun placement(index: Int, width: Float): Placement? {
         val layer = face.layers.getOrNull(index) ?: return null
         val (small, large) = frames(width)
-        val awake = stateOf(layer.id, small, large) ?: return null
+        val transition = resolvedTransition(width)
+        val awake = if (transition != null) {
+            transition.awake[layer.id] ?: return null
+        } else {
+            stateOf(layer.id, small, large) ?: return null
+        }
         val aodSmall = aodSmallFrames
         val aodLarge = aodLargeFrames
         if ((aodSmall == null && aodLarge == null) || aodProgress <= 0f) return morph(layer.id, awake)
-        val asleep = stateOf(layer.id, aodSmall ?: small, aodLarge ?: large) ?: awake.hidden()
+        val asleep = if (transition?.asleep != null) {
+            transition.asleep[layer.id] ?: awake.hidden()
+        } else {
+            stateOf(layer.id, aodSmall ?: small, aodLarge ?: large) ?: awake.hidden()
+        }
         return morph(layer.id, blend(awake, asleep, aodProgress))
     }
 
@@ -1660,6 +1687,324 @@ class ClockFaceView(
         return if (alpha == blended.alpha) blended else blended.withAlpha(alpha)
     }
 
+    private fun resolvedTransition(width: Float): TransitionFrames? {
+        if (width <= 0f || largeProgress <= TRANSITION_EPS || largeProgress >= 1f - TRANSITION_EPS) {
+            return null
+        }
+        val cached = cachedTransition
+        if (cached != null &&
+            transitionWidth == width &&
+            transitionProgress == largeProgress &&
+            transitionPalette == FaceColors.paletteVersion
+        ) {
+            return cached
+        }
+        val (small, large) = frames(width)
+        val awake = resolveTransitionMap(width, small, large, largeProgress)
+        val asleep = if (aodSmallFrames != null || aodLargeFrames != null) {
+            resolveTransitionMap(width, aodSmallFrames ?: small, aodLargeFrames ?: large, largeProgress)
+        } else {
+            null
+        }
+        return TransitionFrames(awake, asleep).also {
+            cachedTransition = it
+            transitionWidth = width
+            transitionProgress = largeProgress
+            transitionPalette = FaceColors.paletteVersion
+        }
+    }
+
+    private enum class TransitionRel {
+        ABOVE,
+        BELOW,
+        SIDE,
+        OVERLAP
+    }
+
+    private class WidgetTransitionGroup(
+        val group: String,
+        val ids: List<String>,
+        val smallRect: RectF?,
+        val largeRect: RectF?,
+        var nowRect: RectF
+    )
+
+    private class WidgetTransitionRow(
+        val groups: MutableList<WidgetTransitionGroup>,
+        var smallRect: RectF?,
+        var largeRect: RectF?,
+        var nowRect: RectF,
+        var smallRel: TransitionRel?,
+        var largeRel: TransitionRel?
+    )
+
+    private fun resolveTransitionMap(
+        width: Float,
+        small: Map<String, Placement>,
+        large: Map<String, Placement>,
+        t: Float
+    ): Map<String, Placement> {
+        val out = HashMap<String, Placement>(face.layers.size)
+        val clockIds = ArrayList<String>()
+        val widgetGroupOrder = LinkedHashMap<String, MutableList<String>>()
+        face.layers.forEach { layer ->
+            val p = stateOf(layer.id, small, large) ?: return@forEach
+            out[layer.id] = p
+            val group = groupOf(layer.id)
+            if (group == CLOCK_GROUP) {
+                clockIds.add(layer.id)
+            } else {
+                widgetGroupOrder.getOrPut(group) { ArrayList() }.add(layer.id)
+            }
+        }
+        if (clockIds.isEmpty() || widgetGroupOrder.isEmpty()) return out
+
+        val tmp = RectF()
+        fun groupExtent(ids: List<String>, map: Map<String, Placement>): RectF? {
+            var union: RectF? = null
+            ids.forEach { id ->
+                val p = map[id] ?: return@forEach
+                if (p.hidden || p.alpha <= 0f) return@forEach
+                extentOf(id, p, tmp)
+                if (union == null) union = RectF(tmp) else union!!.union(tmp)
+            }
+            return union
+        }
+
+        val clockNow = groupExtent(clockIds, out) ?: return out
+        val clockSmall = groupExtent(clockIds, small)
+        val clockLarge = groupExtent(clockIds, large)
+        val relTol = width * TRANSITION_REL_TOL
+
+        fun relation(widget: RectF, clock: RectF): TransitionRel {
+            val hOverlap = widget.right > clock.left + relTol && widget.left < clock.right - relTol
+            val vOverlap = widget.bottom > clock.top + relTol && widget.top < clock.bottom - relTol
+            return when {
+                !vOverlap && widget.bottom <= clock.top + relTol -> TransitionRel.ABOVE
+                !vOverlap && widget.top >= clock.bottom - relTol -> TransitionRel.BELOW
+                !hOverlap -> TransitionRel.SIDE
+                else -> TransitionRel.OVERLAP
+            }
+        }
+
+        val widgetGroups = ArrayList<WidgetTransitionGroup>(widgetGroupOrder.size)
+        widgetGroupOrder.forEach { (group, ids) ->
+            val nowRect = groupExtent(ids, out) ?: return@forEach
+            val smallRect = groupExtent(ids, small)
+            val largeRect = groupExtent(ids, large)
+
+            if (smallRect != null && largeRect != null && clockSmall != null && clockLarge != null) {
+                val sRel = relation(smallRect, clockSmall)
+                val lRel = relation(largeRect, clockLarge)
+                val (tx, ty) = when {
+                    sRel == TransitionRel.SIDE && (lRel == TransitionRel.ABOVE || lRel == TransitionRel.BELOW) ->
+                        fade((t - STAGGER_DELAY) / STAGGER_SPAN) to fade(t / STAGGER_SPAN)
+                    (sRel == TransitionRel.ABOVE || sRel == TransitionRel.BELOW) && lRel == TransitionRel.SIDE ->
+                        fade(t / STAGGER_SPAN) to fade((t - STAGGER_DELAY) / STAGGER_SPAN)
+                    else -> t to t
+                }
+                if (tx != t || ty != t) {
+                    ids.forEach { id ->
+                        val from = small[id]
+                        val to = large[id]
+                        val blended = out[id] ?: return@forEach
+                        if (from != null && to != null && !from.hidden && !to.hidden) {
+                            val nextLeft = lerp(from.left, to.left, tx)
+                            val nextTop = lerp(from.top, to.top, ty)
+                            out[id] = blended.withOffset(nextLeft - blended.left, nextTop - blended.top)
+                        }
+                    }
+                }
+            }
+
+            val updatedNow = groupExtent(ids, out) ?: nowRect
+            widgetGroups.add(WidgetTransitionGroup(group, ids, smallRect, largeRect, updatedNow))
+        }
+
+        if (widgetGroups.isEmpty()) return out
+
+        val rowTol = width * TRANSITION_ROW_TOL
+        fun sameRow(a: WidgetTransitionGroup, b: WidgetTransitionGroup): Boolean {
+            val sMatch = when {
+                a.smallRect != null && b.smallRect != null -> abs(a.smallRect.top - b.smallRect.top) <= rowTol
+                a.smallRect == null && b.smallRect == null -> true
+                else -> false
+            }
+            val lMatch = when {
+                a.largeRect != null && b.largeRect != null -> abs(a.largeRect.top - b.largeRect.top) <= rowTol
+                a.largeRect == null && b.largeRect == null -> true
+                else -> false
+            }
+            return sMatch && lMatch
+        }
+
+        val rows = ArrayList<WidgetTransitionRow>()
+        widgetGroups.forEach { group ->
+            val target = rows.firstOrNull { existing -> sameRow(existing.groups.first(), group) }
+            if (target == null) {
+                rows.add(
+                    WidgetTransitionRow(
+                        groups = arrayListOf(group),
+                        smallRect = group.smallRect?.let(::RectF),
+                        largeRect = group.largeRect?.let(::RectF),
+                        nowRect = RectF(group.nowRect),
+                        smallRel = null,
+                        largeRel = null
+                    )
+                )
+            } else {
+                target.groups.add(group)
+                group.smallRect?.let { r ->
+                    if (target.smallRect == null) target.smallRect = RectF(r) else target.smallRect!!.union(r)
+                }
+                group.largeRect?.let { r ->
+                    if (target.largeRect == null) target.largeRect = RectF(r) else target.largeRect!!.union(r)
+                }
+                target.nowRect.union(group.nowRect)
+            }
+        }
+
+        rows.forEach { row ->
+            row.smallRel = if (row.smallRect != null && clockSmall != null) relation(row.smallRect!!, clockSmall) else null
+            row.largeRel = if (row.largeRect != null && clockLarge != null) relation(row.largeRect!!, clockLarge) else null
+        }
+
+        val minGap = width * TRANSITION_MIN_GAP
+        fun shiftRowY(row: WidgetTransitionRow, dy: Float) {
+            if (dy == 0f) return
+            row.nowRect.offset(0f, dy)
+            row.groups.forEach { g ->
+                g.nowRect.offset(0f, dy)
+                g.ids.forEach { id ->
+                    out[id]?.let { out[id] = it.withOffset(0f, dy) }
+                }
+            }
+        }
+
+        // Preserve clearance for rows staying below the clock
+        val belowRows = rows
+            .filter { it.smallRel == TransitionRel.BELOW && it.largeRel == TransitionRel.BELOW }
+            .sortedBy { it.nowRect.top }
+        var prevBelow: WidgetTransitionRow? = null
+        belowRows.forEach { row ->
+            val sRect = row.smallRect!!
+            val lRect = row.largeRect!!
+            val smallClockClear = (sRect.top - clockSmall!!.bottom).coerceAtLeast(0f)
+            val largeClockClear = (lRect.top - clockLarge!!.bottom).coerceAtLeast(0f)
+            val reqClockGap = lerp(min(minGap, smallClockClear), min(minGap, largeClockClear), t)
+
+            val hOverlapClock = row.nowRect.right > clockNow.left - minGap * 0.5f &&
+                row.nowRect.left < clockNow.right + minGap * 0.5f
+            val minTopFromClock = if (hOverlapClock) clockNow.bottom + reqClockGap else Float.NEGATIVE_INFINITY
+
+            val minTopFromPrev = prevBelow?.let { prev ->
+                val pSmall = prev.smallRect
+                val pLarge = prev.largeRect
+                if (pSmall != null && pLarge != null && sRect.top >= pSmall.bottom - relTol && lRect.top >= pLarge.bottom - relTol) {
+                    val hOverlapPrev = row.nowRect.right > prev.nowRect.left - minGap * 0.5f &&
+                        row.nowRect.left < prev.nowRect.right + minGap * 0.5f
+                    if (hOverlapPrev) {
+                        val sRowGap = (sRect.top - pSmall.bottom).coerceAtLeast(0f)
+                        val lRowGap = (lRect.top - pLarge.bottom).coerceAtLeast(0f)
+                        prev.nowRect.bottom + lerp(min(minGap, sRowGap), min(minGap, lRowGap), t)
+                    } else {
+                        Float.NEGATIVE_INFINITY
+                    }
+                } else {
+                    Float.NEGATIVE_INFINITY
+                }
+            } ?: Float.NEGATIVE_INFINITY
+
+            val dy = (max(minTopFromClock, minTopFromPrev) - row.nowRect.top).coerceAtLeast(0f)
+            shiftRowY(row, dy)
+            prevBelow = row
+        }
+
+        // Preserve clearance for rows staying above the clock
+        val aboveRows = rows
+            .filter { it.smallRel == TransitionRel.ABOVE && it.largeRel == TransitionRel.ABOVE }
+            .sortedByDescending { it.nowRect.bottom }
+        var prevAbove: WidgetTransitionRow? = null
+        aboveRows.forEach { row ->
+            val sRect = row.smallRect!!
+            val lRect = row.largeRect!!
+            val smallClockClear = (clockSmall!!.top - sRect.bottom).coerceAtLeast(0f)
+            val largeClockClear = (clockLarge!!.top - lRect.bottom).coerceAtLeast(0f)
+            val reqClockGap = lerp(min(minGap, smallClockClear), min(minGap, largeClockClear), t)
+
+            val hOverlapClock = row.nowRect.right > clockNow.left - minGap * 0.5f &&
+                row.nowRect.left < clockNow.right + minGap * 0.5f
+            val maxBottomFromClock = if (hOverlapClock) clockNow.top - reqClockGap else Float.POSITIVE_INFINITY
+
+            val maxBottomFromPrev = prevAbove?.let { prev ->
+                val pSmall = prev.smallRect
+                val pLarge = prev.largeRect
+                if (pSmall != null && pLarge != null && sRect.bottom <= pSmall.top + relTol && lRect.bottom <= pLarge.top + relTol) {
+                    val hOverlapPrev = row.nowRect.right > prev.nowRect.left - minGap * 0.5f &&
+                        row.nowRect.left < prev.nowRect.right + minGap * 0.5f
+                    if (hOverlapPrev) {
+                        val sRowGap = (pSmall.top - sRect.bottom).coerceAtLeast(0f)
+                        val lRowGap = (pLarge.top - lRect.bottom).coerceAtLeast(0f)
+                        prev.nowRect.top - lerp(min(minGap, sRowGap), min(minGap, lRowGap), t)
+                    } else {
+                        Float.POSITIVE_INFINITY
+                    }
+                } else {
+                    Float.POSITIVE_INFINITY
+                }
+            } ?: Float.POSITIVE_INFINITY
+
+            val rawDy = (min(maxBottomFromClock, maxBottomFromPrev) - row.nowRect.bottom).coerceAtMost(0f)
+            val maxUpDy = (-width * TRANSITION_TOP_OVERSHOOT - row.nowRect.top).coerceAtMost(0f)
+            shiftRowY(row, max(rawDy, maxUpDy))
+            prevAbove = row
+        }
+
+        // Fade out any widget row that would still intersect or graze the clock mid-transition
+        val pad = width * TRANSITION_CLOCK_PAD
+        val fadeBand = width * TRANSITION_FADE_BAND
+        val expandedNow = RectF(clockNow.left - pad, clockNow.top - pad, clockNow.right + pad, clockNow.bottom + pad)
+        val expandedSmall = clockSmall?.let { RectF(it.left - pad, it.top - pad, it.right + pad, it.bottom + pad) }
+        val expandedLarge = clockLarge?.let { RectF(it.left - pad, it.top - pad, it.right + pad, it.bottom + pad) }
+
+        rows.forEach { row ->
+            val smallDist = if (row.smallRect != null && expandedSmall != null) boxDistance(row.smallRect!!, expandedSmall) else fadeBand
+            val largeDist = if (row.largeRect != null && expandedLarge != null) boxDistance(row.largeRect!!, expandedLarge) else fadeBand
+            val distNow = boxDistance(row.nowRect, expandedNow)
+            val endpointClear = smallDist > 0f && largeDist > 0f
+            val alphaScale = if (endpointClear) {
+                val band = lerp(min(fadeBand, smallDist), min(fadeBand, largeDist), t)
+                if (distNow <= 0f) 0f else if (band <= 0f) 1f else fade((distNow / band).coerceIn(0f, 1f))
+            } else if (row.smallRel != null && row.largeRel != null && row.smallRel != row.largeRel) {
+                // Crossing sides where an endpoint was already close/touching: keep smooth at endpoints
+                val endGuard = when {
+                    smallDist <= 0f && largeDist <= 0f -> 1f
+                    smallDist <= 0f -> fade(((1f - t) / TRANSITION_GUARD_END).coerceIn(0f, 1f))
+                    else -> fade((t / TRANSITION_GUARD_END).coerceIn(0f, 1f))
+                }
+                val crossFade = if (distNow <= 0f) 0f else fade((distNow / fadeBand).coerceIn(0f, 1f))
+                max(crossFade, endGuard)
+            } else {
+                1f
+            }
+            if (alphaScale < 1f) {
+                row.groups.forEach { g ->
+                    g.ids.forEach { id ->
+                        out[id]?.let { p -> out[id] = p.withAlpha(p.alpha * alphaScale) }
+                    }
+                }
+            }
+        }
+
+        return out
+    }
+
+    private fun boxDistance(a: RectF, b: RectF): Float {
+        val dx = max(0f, max(b.left - a.right, a.left - b.right))
+        val dy = max(0f, max(b.top - a.bottom, a.top - b.bottom))
+        return hypot(dx, dy)
+    }
+
     private fun Placement.bottom(layer: FaceLayer?): Float {
         val descent = if (layer == null || layer.isTime || layer.isShape) DESCENT else TEXT_DESCENT
         return top + size * (capRatio * stretch * lineHeight + descent)
@@ -1669,11 +2014,15 @@ class ClockFaceView(
         if (root is StackNode && root.width != null) root.placement.y * width + measure(root, width).height else 0f
 
     private fun bottomOf(placements: Map<String, Placement>, exclude: Set<String> = emptySet()): Float =
-        placements.filter { (id, placement) -> !placement.hidden && groupOf(id) !in exclude }
+        placements.filter { (id, placement) -> !placement.hidden && placement.alpha > 0f && groupOf(id) !in exclude }
             .maxOfOrNull { (id, placement) -> placement.bottom(layerById(id)) } ?: 0f
 
     private fun Placement.withAlpha(value: Float): Placement = Placement(
         left, top, size, value, rotation, capRatio, advances, widthAxis, heightAxis, tracking, weight, color, lineHeight, stretch, stretchX, effect, hidden, tiltX, tiltY, drop
+    )
+
+    private fun Placement.withOffset(dx: Float, dy: Float): Placement = if (dx == 0f && dy == 0f) this else Placement(
+        left + dx, top + dy, size, alpha, rotation, capRatio, advances, widthAxis, heightAxis, tracking, weight, color, lineHeight, stretch, stretchX, effect, hidden, tiltX, tiltY, drop
     )
 
     private fun fade(value: Float): Float {
@@ -1694,6 +2043,7 @@ class ClockFaceView(
             largeFrames = resolve(face.large, width)
             aodSmallFrames = face.aodSmall?.let { resolve(it, width) }
             aodLargeFrames = face.aodLarge?.let { resolve(it, width) }
+            cachedTransition = null
         }
         return smallFrames!! to largeFrames!!
     }
@@ -1703,6 +2053,9 @@ class ClockFaceView(
         largeFrames = null
         aodSmallFrames = null
         aodLargeFrames = null
+        cachedTransition = null
+        transitionWidth = -1f
+        transitionProgress = -1f
     }
 
     private fun resolve(root: FaceNode, width: Float): Map<String, Placement> {
@@ -2098,7 +2451,22 @@ class ClockFaceView(
         private const val DATE_FORMAT = "EEE d MMM"
         private val WAKE_EASING = PathInterpolator(0.3f, 0f, 0f, 1f)
         private val CHANGE_EASING = PathInterpolator(0.4f, 0f, 0.1f, 1f)
+        private const val TRANSITION_EPS = 0.001f
+        private const val TRANSITION_REL_TOL = 0.005f
+        private const val TRANSITION_ROW_TOL = 0.025f
+        private const val TRANSITION_MIN_GAP = 0.032f
+        private const val TRANSITION_CLOCK_PAD = 0.006f
+        private const val TRANSITION_FADE_BAND = 0.024f
+        private const val TRANSITION_TOP_OVERSHOOT = 0.01f
+        private const val TRANSITION_GUARD_END = 0.18f
+        private const val STAGGER_SPAN = 0.58f
+        private const val STAGGER_DELAY = 0.42f
     }
+
+    private data class TransitionFrames(
+        val awake: Map<String, Placement>,
+        val asleep: Map<String, Placement>?
+    )
 }
 
 private const val CLOCK_GROUP = "clock"

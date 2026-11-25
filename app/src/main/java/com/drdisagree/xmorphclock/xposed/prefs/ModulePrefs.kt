@@ -94,6 +94,12 @@ object ModulePrefs {
     val shortcutRight: String?
         get() = string(PrefKeys.SHORTCUT_RIGHT)
 
+    val shortcutLeftStamp: Long
+        get() = long(PrefKeys.SHORTCUT_LEFT_STAMP, 0L)
+
+    val shortcutRightStamp: Long
+        get() = long(PrefKeys.SHORTCUT_RIGHT_STAMP, 0L)
+
     val wallpaperView: FloatArray?
         get() = string(PrefKeys.WALLPAPER_VIEW)
             ?.split(',')
