@@ -198,6 +198,106 @@ object FaceEditor {
 
     fun scaleNode(node: FaceNode, factor: Float): FaceNode = if (factor == 1f || factor <= 0f) node else scaled(node, factor, true)
 
+    fun stretchNode(
+        node: FaceNode,
+        layers: List<FaceLayer>,
+        widthStretch: Float,
+        heightStretch: Float
+    ): FaceNode {
+        val w = widthStretch.takeIf { it.isFinite() && it > 0f } ?: 1f
+        val h = heightStretch.takeIf { it.isFinite() && it > 0f } ?: 1f
+        if (abs(w - 1f) < 1e-4f && abs(h - 1f) < 1e-4f) return node
+        return stretched(node, layers, w, h, true)
+    }
+
+    private fun stretched(
+        node: FaceNode,
+        layers: List<FaceLayer>,
+        widthStretch: Float,
+        heightStretch: Float,
+        root: Boolean
+    ): FaceNode {
+        val placement = if (root) {
+            node.placement
+        } else {
+            node.placement.copy(
+                x = node.placement.x * widthStretch,
+                y = node.placement.y * heightStretch
+            )
+        }
+        return when (node) {
+            is LayerNode -> {
+                val layer = layers.firstOrNull { it.id == node.id }
+                if (layer == null || layer.isShape) {
+                    return if (root) node else node.copy(placement = placement)
+                }
+                val wFactor = if (layer.isTime) widthStretch else 1f + (widthStretch - 1f) * 0.4f
+                val hFactor = if (layer.isTime) heightStretch else 1f + (heightStretch - 1f) * 0.4f
+
+                val (nextWidth, nextStretchX) = if (com.drdisagree.xmorphclock.engine.FaceFont.hasWidthAxis(layer.font)) {
+                    val baseW = (node.width ?: layer.width).toFloat()
+                    val targetW = (baseW + (wFactor - 1f) * WIDTH_AXIS_SENSITIVITY)
+                        .toInt()
+                        .coerceIn(MIN_WIDTH_AXIS, MAX_WIDTH_AXIS)
+                    val consumed = (1f + (targetW - baseW) / WIDTH_AXIS_SENSITIVITY).coerceAtLeast(0.35f)
+                    val overflow = (wFactor / consumed).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                    val finalSx = if (abs(overflow - 1f) > 0.015f) {
+                        ((node.stretchX ?: 1f) * overflow).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                    } else {
+                        node.stretchX
+                    }
+                    targetW to finalSx
+                } else {
+                    node.width to ((node.stretchX ?: 1f) * wFactor).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                }
+
+                val (nextHeight, nextStretch) = if (com.drdisagree.xmorphclock.engine.FaceFont.hasHeightAxis(layer.font)) {
+                    val baseH = (node.height ?: layer.height).toFloat()
+                    val targetH = (baseH + (hFactor - 1f) * HEIGHT_AXIS_SENSITIVITY)
+                        .toInt()
+                        .coerceIn(MIN_HEIGHT_AXIS, MAX_HEIGHT_AXIS)
+                    val consumed = (1f + (targetH - baseH) / HEIGHT_AXIS_SENSITIVITY).coerceAtLeast(0.4f)
+                    val overflow = (hFactor / consumed).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                    val finalSy = if (abs(overflow - 1f) > 0.015f) {
+                        ((node.stretch ?: 1f) * overflow).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                    } else {
+                        node.stretch
+                    }
+                    targetH to finalSy
+                } else {
+                    node.height to ((node.stretch ?: 1f) * hFactor).coerceIn(MIN_STRETCH, MAX_STRETCH)
+                }
+
+                node.copy(
+                    width = nextWidth,
+                    height = nextHeight,
+                    stretch = nextStretch,
+                    stretchX = nextStretchX,
+                    placement = placement
+                )
+            }
+
+            is RowNode -> node.copy(
+                children = node.children.map { stretched(it, layers, widthStretch, heightStretch, false) },
+                gap = node.gap * (0.5f + 0.5f * widthStretch),
+                placement = placement
+            )
+
+            is ColumnNode -> node.copy(
+                children = node.children.map { stretched(it, layers, widthStretch, heightStretch, false) },
+                gap = node.gap * (0.5f + 0.5f * heightStretch),
+                placement = placement
+            )
+
+            is StackNode -> node.copy(
+                children = node.children.map { stretched(it, layers, widthStretch, heightStretch, false) },
+                width = node.width?.let { it * widthStretch },
+                height = node.height?.let { it * heightStretch },
+                placement = placement
+            )
+        }
+    }
+
     private fun scaled(node: FaceNode, factor: Float, root: Boolean): FaceNode {
         val placement = if (root) node.placement else node.placement.copy(x = node.placement.x * factor, y = node.placement.y * factor)
         return when (node) {
@@ -406,3 +506,11 @@ object FaceEditor {
 private const val MIN_SLEEP_SCALE = 0.2f
 private const val MAX_SLEEP_SCALE = 3f
 private const val GROUP_EDGE = 0.0225f
+private const val MIN_WIDTH_AXIS = 25
+private const val MAX_WIDTH_AXIS = 151
+private const val MIN_HEIGHT_AXIS = 560
+private const val MAX_HEIGHT_AXIS = 788
+private const val WIDTH_AXIS_SENSITIVITY = 140f
+private const val HEIGHT_AXIS_SENSITIVITY = 300f
+private const val MIN_STRETCH = 0.45f
+private const val MAX_STRETCH = 1.75f

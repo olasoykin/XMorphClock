@@ -9,6 +9,8 @@ import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
 import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.ItemState
+import com.drdisagree.xmorphclock.domain.model.LayerNode
+import com.drdisagree.xmorphclock.domain.model.StackNode
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -101,10 +103,62 @@ class FaceComposerTest {
 
     @Test
     fun compositionJsonRoundTrip() {
-        val composition = Composition()
+        val composition = Composition(gridCols = 3, gridRows = 2, inlineRows = 3)
             .add(3100, FacePlacement(0.5f, 0.7f, FaceAlign.CENTER), null)
             .place(0, ItemState.SMALL, FacePlacement(0.1f, 0.2f, FaceAlign.START))
+            .copy(
+                items = listOf(
+                    CompositionItem(
+                        id = 0,
+                        clock = true,
+                        largeScale = 1.25f,
+                        largeWidthStretch = 1.3f,
+                        largeHeightStretch = 0.85f
+                    )
+                )
+            )
         assertEquals(composition, CompositionJsonMapper.fromJson(CompositionJsonMapper.toJson(composition)))
+    }
+
+    @Test
+    fun widgetsKeepLargeNodeSizeInSmallAndAodSmall() {
+        val clock = load(CLOCK_DIR).first()
+        val baseWidget = load(WIDGET_DIR).first()
+        val largeRoot = StackNode(children = listOf(LayerNode(id = "lbl", size = 0.16f)))
+        val tinySmallRoot = StackNode(children = listOf(LayerNode(id = "lbl", size = 0.05f)))
+        val customWidget = baseWidget.copy(large = largeRoot, small = tinySmallRoot, aodLarge = largeRoot, aodSmall = tinySmallRoot)
+
+        val comp = Composition().add(4100, FacePlacement(0.5f, 0.7f, FaceAlign.CENTER), FacePlacement(0.5f, 0.5f, FaceAlign.CENTER))
+        val composed = FaceComposer.compose(ComposedFaces(clock, mapOf(4100 to customWidget), comp))
+
+        val smallWidgetNode = (composed.small as StackNode).children.last() as StackNode
+        val smallLayer = smallWidgetNode.children.first() as LayerNode
+        assertEquals(0.16f, smallLayer.size, 1e-4f)
+
+        val aodSmallWidgetNode = (composed.aodSmall as StackNode).children.last() as StackNode
+        val aodSmallLayer = aodSmallWidgetNode.children.first() as LayerNode
+        assertEquals(0.16f, aodSmallLayer.size, 1e-4f)
+    }
+
+    @Test
+    fun clockWidthAndHeightStretchAppliesAxesAndDecomposesCleanly() {
+        val clock = load(CLOCK_DIR).first()
+        val comp = Composition(
+            listOf(
+                CompositionItem(
+                    id = 0,
+                    clock = true,
+                    largeScale = 1.15f,
+                    largeWidthStretch = 1.25f,
+                    largeHeightStretch = 0.85f
+                )
+            )
+        )
+        val parts = ComposedFaces(clock, emptyMap(), comp)
+        val composed = FaceComposer.compose(parts)
+        val restored = FaceComposer.decompose(composed, parts)
+        assertEquals(clock, restored.clock)
+        assertEquals(composed, FaceComposer.compose(restored))
     }
 
     private companion object {

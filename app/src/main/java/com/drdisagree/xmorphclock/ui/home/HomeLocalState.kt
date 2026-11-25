@@ -11,5 +11,6 @@ internal data class HomeLocalState(
     val item: Int?,
     val focus: String?,
     val dragging: Boolean,
-    val shortcutSlot: ShortcutSlot = ShortcutSlot.LEFT
+    val shortcutSlot: ShortcutSlot = ShortcutSlot.LEFT,
+    val sheetOpen: Boolean = false
 )

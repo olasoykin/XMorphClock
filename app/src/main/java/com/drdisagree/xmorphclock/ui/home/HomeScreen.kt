@@ -195,7 +195,7 @@ fun HomeScreen(
     val editorState by editor.uiState.collectAsStateWithLifecycle()
     val styleStatus by viewModel.styleStatus.collectAsStateWithLifecycle()
     val editing = state.editingStyle != null && editorState.face != null && editorState.style == state.editingStyle
-    val sheetOpen = editing || state.activeTarget != null
+    val sheetOpen = editing || state.sheetOpen
 
     val aspect = LocalClockGeometry.current.aspect
     val density = LocalDensity.current
@@ -207,8 +207,8 @@ fun HomeScreen(
     val editorHeight = (screenHeight * EDITOR_FRACTION - navBottom - SHEET_MARGIN).coerceAtLeast(280.dp)
 
     var facesExpanded by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(state.activeTarget) {
-        if (state.activeTarget == null) facesExpanded = false
+    LaunchedEffect(state.sheetOpen, state.activeTarget) {
+        if (!state.sheetOpen || state.activeTarget == null) facesExpanded = false
     }
 
     val morph by animateFloatAsState(
@@ -222,7 +222,7 @@ fun HomeScreen(
         label = "sheetProgress"
     )
     val expand by animateFloatAsState(
-        if (facesExpanded && !editing && state.activeTarget != null) 1f else 0f,
+        if (facesExpanded && !editing && state.sheetOpen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "expand"
     )
@@ -312,7 +312,7 @@ fun HomeScreen(
         }
     }
 
-    BackHandler(enabled = state.activeTarget != null && !editing) {
+    BackHandler(enabled = (state.activeTarget != null || state.sheetOpen) && !editing) {
         if (facesExpanded) facesExpanded = false
         else viewModel.onTargetSelected(null)
     }
@@ -410,7 +410,7 @@ fun HomeScreen(
                     TopBar(
                         status = state.moduleStatus,
                         previewOnly = previewOnly,
-                        selecting = state.activeTarget != null,
+                        selecting = state.activeTarget != null || state.sheetOpen,
                         unsaved = styleStatus.changed,
                         menuOpen = menuOpen,
                         onDismissMenu = { menuOpen = false },
@@ -706,6 +706,7 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                 ItemOverlay(
                     extents = extents,
                     composition = state.composition,
+                    itemState = itemState,
                     gridWidgetIds = gridIds,
                     inlineWidgetIds = inlineIds,
                     activeTarget = state.activeTarget,
@@ -723,6 +724,9 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                     onDrag = { deltas, gridDocked, inlineDocked ->
                         viewModel.onTargetsDrag(itemState, deltas, gridDocked, inlineDocked)
                     },
+                    onClockTransform = viewModel::onClockTransform,
+                    onGridSizeChange = viewModel::onGridSizeChange,
+                    onInlineRowsChange = viewModel::onInlineRowsChange,
                     onDragEnd = viewModel::onTargetDragEnd,
                     onToggleWidgetsPosition = viewModel::onToggleWidgetsPosition,
                     onMeasured = { bounds, maxY, maxYByState ->
@@ -1067,7 +1071,7 @@ private fun TargetCustomizationSheet(
 
                     LockTarget.WIDGET_GRID -> WidgetSheetHeader(
                         title = stringResource(R.string.sheet_widgets_1x4),
-                        usage = stringResource(R.string.slots_used_grid, state.gridCellsUsed),
+                        usage = stringResource(R.string.slots_used_grid, state.gridCellsUsed, state.composition.gridCapacity),
                         hasItems = state.gridWidgets.isNotEmpty(),
                         onAddCustom = onAdd,
                         onEditFirst = { onEditItem(state.selectedItem ?: state.gridWidgets.firstOrNull()?.id) }

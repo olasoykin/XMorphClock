@@ -4,6 +4,7 @@ import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.ColumnNode
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
+import com.drdisagree.xmorphclock.domain.model.FaceGrid
 import com.drdisagree.xmorphclock.domain.model.FaceLayer
 import com.drdisagree.xmorphclock.domain.model.FaceLayerType
 import com.drdisagree.xmorphclock.domain.model.FacePlacement
@@ -42,16 +43,16 @@ class WidgetGridsTest {
 
         var comp = Composition().add(100, null, null).add(101, null, null)
         assertEquals(3, WidgetGrids.usedGridCells(comp) { map[it] })
-        assertTrue(WidgetGrids.canAdd(comp, w3) { map[it] })
-        assertFalse(WidgetGrids.canAdd(comp, w2) { map[it] })
+        assertTrue(WidgetGrids.canAdd(comp, w3, faceOf = { map[it] }))
+        assertFalse(WidgetGrids.canAdd(comp, w2, faceOf = { map[it] }))
 
         comp = comp.add(102, null, null)
         assertEquals(4, WidgetGrids.usedGridCells(comp) { map[it] })
-        assertFalse(WidgetGrids.canAdd(comp, wExtra) { map[it] })
+        assertFalse(WidgetGrids.canAdd(comp, wExtra, faceOf = { map[it] }))
     }
 
     @Test
-    fun inline1x2OnlyAcceptsInlineAndMaxTwoItems() {
+    fun inlineAcceptsMoreThanTwoItemsBoundedByScreenSpace() {
         val inlineA = face("InA", category = "inline", height = 0.08f)
         val inlineB = face("InB", category = "inline", height = 0.08f)
         val inlineC = face("InC", category = "inline", height = 0.08f)
@@ -64,13 +65,13 @@ class WidgetGridsTest {
         var comp = Composition().add(203, null, null).add(200, null, null)
         assertEquals(1, WidgetGrids.inlineItems(comp) { map[it] }.size)
         assertEquals(1, WidgetGrids.gridItems(comp) { map[it] }.size)
-        assertTrue(WidgetGrids.canAdd(comp, inlineB) { map[it] })
+        assertTrue(WidgetGrids.canAdd(comp, inlineB, faceOf = { map[it] }))
 
         comp = comp.add(201, null, null)
         assertEquals(2, WidgetGrids.inlineItems(comp) { map[it] }.size)
-        assertFalse(WidgetGrids.canAdd(comp, inlineC) { map[it] })
+        assertTrue(WidgetGrids.canAdd(comp, inlineC, faceOf = { map[it] }))
         // 1x4 grid still has 2 free cells
-        assertTrue(WidgetGrids.canAdd(comp, face("Small", span = 2)) { map[it] })
+        assertTrue(WidgetGrids.canAdd(comp, face("Small", span = 2), faceOf = { map[it] }))
     }
 
     @Test
@@ -90,12 +91,18 @@ class WidgetGridsTest {
         comp = WidgetGrids.layoutZone(comp, WidgetZone.INLINE_1X2, ItemState.LARGE, { map[it] }, clockBottom)
 
         val gridPlacement = WidgetGrids.gridItems(comp) { map[it] }.first().large!!
-        val inlinePlacements = WidgetGrids.inlineItems(comp) { map[it] }.map { it.large!! }
+        val inlineItems = WidgetGrids.inlineItems(comp) { map[it] }
+        val inlinePlacements = inlineItems.map { it.large!! }
         assertTrue(gridPlacement.y > clockBottom)
         assertTrue(inlinePlacements[0].y > gridPlacement.y)
         assertEquals(inlinePlacements[0].y, inlinePlacements[1].y, 1e-4f)
-        assertEquals(FaceAlign.END, inlinePlacements[0].anchor)
-        assertEquals(FaceAlign.START, inlinePlacements[1].anchor)
+        assertEquals(FaceAlign.CENTER, inlinePlacements[0].anchor)
+        assertEquals(FaceAlign.CENTER, inlinePlacements[1].anchor)
+        assertEquals(0.5f, (inlinePlacements[0].x + inlinePlacements[1].x) / 2f, 1e-4f)
+        val w1 = WidgetGrids.estimateInlineWidth(inlineItems[0], { map[it] })
+        val w2 = WidgetGrids.estimateInlineWidth(inlineItems[1], { map[it] })
+        val expectedSpacing = (w1 + w2) / 2f + WidgetGrids.INLINE_ITEM_GAP
+        assertEquals(expectedSpacing, inlinePlacements[1].x - inlinePlacements[0].x, 1e-4f)
     }
 
     @Test
@@ -907,6 +914,94 @@ class WidgetGridsTest {
         assertTrue(inlineAodLarge.y < gridAodLarge.y)
         assertTrue(gridAodSmall.y < clockBounds.top)
         assertTrue(inlineAodSmall.y < gridAodSmall.y)
+    }
+
+    @Test
+    fun grid2x4PacksUpToEightCellsAcrossTwoRows() {
+        val m1 = face("M1", category = "medium", span = 2)
+        val m2 = face("M2", category = "medium", span = 2)
+        val m3 = face("M3", category = "medium", span = 2)
+        val m4 = face("M4", category = "medium", span = 2)
+        val extra = face("Extra", category = "small", span = 1)
+        val map = mapOf(100 to m1, 101 to m2, 102 to m3, 103 to m4, 104 to extra)
+
+        var comp = Composition(gridCols = 4, gridRows = 2)
+            .add(100, null, null)
+            .add(101, null, null)
+            .add(102, null, null)
+        assertTrue(WidgetGrids.canAdd(comp, m4, faceOf = { map[it] }))
+
+        comp = comp.add(103, null, null)
+        assertEquals(8, WidgetGrids.usedGridCells(comp) { map[it] })
+        assertFalse(WidgetGrids.canAdd(comp, extra, faceOf = { map[it] }))
+
+        val laidOut = WidgetGrids.layoutZone(comp, WidgetZone.GRID_1X4, ItemState.LARGE, { map[it] }, 0.40f)
+        val placements = WidgetGrids.gridItems(laidOut) { map[it] }.map { it.large!! }
+        assertEquals(placements[0].y, placements[1].y, 1e-4f)
+        assertEquals(placements[2].y, placements[3].y, 1e-4f)
+        assertTrue("Second row must be strictly below first row", placements[2].y > placements[0].y + FaceGrid.CELL)
+        assertEquals(0.5f, (placements[0].x + placements[1].x) / 2f, 1e-4f)
+        assertEquals(0.5f, (placements[2].x + placements[3].x) / 2f, 1e-4f)
+    }
+
+    @Test
+    fun inlineFlowPackingWrapsIntoSecondRowAndCentersEachRow() {
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val in2 = face("I2", category = "inline", height = 0.08f)
+        val in3 = face("I3", category = "inline", height = 0.08f)
+        val map = mapOf(200 to in1, 201 to in2, 202 to in3)
+
+        val comp = Composition(inlineRows = 2)
+            .add(200, null, null)
+            .add(201, null, null)
+            .add(202, null, null)
+        val widths = mapOf(
+            comp.items[1].id to 0.42f,
+            comp.items[2].id to 0.42f,
+            comp.items[3].id to 0.30f
+        )
+
+        val laidOut = WidgetGrids.layoutZone(
+            composition = comp,
+            zone = WidgetZone.INLINE_1X2,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBottomY = 0.40f,
+            measuredInlineWidths = widths
+        )
+        val placements = WidgetGrids.inlineItems(laidOut) { map[it] }.map { it.large!! }
+        // First two fit on row 1 (0.42 + 0.036 + 0.42 = 0.876 <= 0.955), third wraps to row 2 centered
+        assertEquals(placements[0].y, placements[1].y, 1e-4f)
+        assertTrue("Third inline widget should wrap to second row", placements[2].y > placements[0].y + 0.05f)
+        assertEquals(0.5f, (placements[0].x + placements[1].x) / 2f, 1e-4f)
+        assertEquals(0.5f, placements[2].x, 1e-4f)
+        assertEquals(0.42f + WidgetGrids.INLINE_ITEM_GAP, placements[1].x - placements[0].x, 1e-4f)
+    }
+
+    @Test
+    fun solveStickyDragDetachedWidgetDraggedOutwardStaysDetached() {
+        val startBounds = mapOf(
+            LockTarget.CLOCK to ItemBounds(left = 0.2f, top = 0.2f, right = 0.8f, bottom = 0.5f),
+            LockTarget.WIDGET_GRID to ItemBounds(left = 0.15f, top = 0.54f, right = 0.85f, bottom = 0.69f)
+        )
+        val result = WidgetGrids.solveStickyDrag(
+            activeTarget = LockTarget.WIDGET_GRID,
+            startBounds = startBounds,
+            rawDx = 0f,
+            rawDy = 0.08f,
+            lastValidDeltas = startBounds.keys.associateWith { 0f to 0f },
+            gridDocked = false,
+            inlineDocked = false,
+            minX = 0.02f,
+            maxX = 0.98f,
+            minY = 0.02f,
+            maxY = 1.60f,
+            fixedObstacles = emptyList(),
+            gap = 0.02f
+        )
+
+        assertFalse("Dragging detached widget outward away from clock must stay detached", result.gridDocked)
+        assertFalse(result.attachedEvent)
     }
 
     private fun boundsOverlap(a: ItemBounds, b: ItemBounds): Boolean =

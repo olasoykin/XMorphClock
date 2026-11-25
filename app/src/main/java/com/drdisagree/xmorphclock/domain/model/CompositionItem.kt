@@ -10,10 +10,17 @@ data class CompositionItem(
     val aodSmall: FacePlacement? = null,
     val hidden: Set<ItemState> = emptySet(),
     val largeScale: Float = 1f,
-    val smallScale: Float = 1f
+    val smallScale: Float = 1f,
+    val largeWidthStretch: Float = 1f,
+    val largeHeightStretch: Float = 1f,
+    val smallWidthStretch: Float = 1f,
+    val smallHeightStretch: Float = 1f
 ) {
     val isDefault: Boolean
-        get() = large == null && small == null && aodLarge == null && aodSmall == null && hidden.isEmpty() && largeScale == 1f && smallScale == 1f
+        get() = large == null && small == null && aodLarge == null && aodSmall == null &&
+            hidden.isEmpty() && largeScale == 1f && smallScale == 1f &&
+            largeWidthStretch == 1f && largeHeightStretch == 1f &&
+            smallWidthStretch == 1f && smallHeightStretch == 1f
 
     fun visible(state: ItemState): Boolean = state !in hidden
 
@@ -21,6 +28,19 @@ data class CompositionItem(
 
     fun withScale(state: ItemState, value: Float): CompositionItem =
         if (state == ItemState.LARGE || state == ItemState.AOD_LARGE) copy(largeScale = value) else copy(smallScale = value)
+
+    fun widthStretch(state: ItemState): Float =
+        if (state == ItemState.LARGE || state == ItemState.AOD_LARGE) largeWidthStretch else smallWidthStretch
+
+    fun heightStretch(state: ItemState): Float =
+        if (state == ItemState.LARGE || state == ItemState.AOD_LARGE) largeHeightStretch else smallHeightStretch
+
+    fun withTransform(state: ItemState, scale: Float, widthStretch: Float, heightStretch: Float): CompositionItem =
+        if (state == ItemState.LARGE || state == ItemState.AOD_LARGE) {
+            copy(largeScale = scale, largeWidthStretch = widthStretch, largeHeightStretch = heightStretch)
+        } else {
+            copy(smallScale = scale, smallWidthStretch = widthStretch, smallHeightStretch = heightStretch)
+        }
 
     val hasAod: Boolean
         get() = aodLarge != null || aodSmall != null || ItemState.AOD_LARGE in hidden || ItemState.AOD_SMALL in hidden

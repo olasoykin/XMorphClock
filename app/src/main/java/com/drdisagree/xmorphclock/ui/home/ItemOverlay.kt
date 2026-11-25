@@ -84,10 +84,22 @@ import com.drdisagree.xmorphclock.ui.theme.OnInk
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+private enum class ResizeHandle {
+    TOP_LEFT,
+    TOP_RIGHT,
+    BOTTOM_LEFT,
+    BOTTOM_RIGHT,
+    LEFT,
+    RIGHT,
+    TOP,
+    BOTTOM
+}
+
 @Composable
 fun BoxScope.ItemOverlay(
     extents: Map<String, RectF>,
     composition: Composition,
+    itemState: ItemState,
     gridWidgetIds: Set<Int>,
     inlineWidgetIds: Set<Int>,
     activeTarget: LockTarget?,
@@ -101,8 +113,11 @@ fun BoxScope.ItemOverlay(
     width: Float,
     height: Float,
     settled: Boolean = true,
-    onSelectTarget: (LockTarget?, ShortcutSlot?) -> Unit,
+    onSelectTarget: (LockTarget?, ShortcutSlot?, Boolean) -> Unit,
     onDrag: (Map<LockTarget, Pair<Float, Float>>, Boolean, Boolean) -> Unit,
+    onClockTransform: (ItemState, Float, Float, Float) -> Unit,
+    onGridSizeChange: (ItemState, Int, Int) -> Unit,
+    onInlineRowsChange: (ItemState, Int) -> Unit,
     onDragEnd: () -> Unit,
     onToggleWidgetsPosition: () -> Unit,
     onMeasured: (Map<Int, ItemBounds>, Float, Map<ItemState, Float>) -> Unit
@@ -117,6 +132,9 @@ fun BoxScope.ItemOverlay(
     val minTouch = with(density) { MIN_TOUCH_SIZE.toPx() }
     val minShortcutPx = with(density) { SHORTCUT_MIN_SIZE.toPx() }
     val maxShortcutPx = with(density) { SHORTCUT_MAX_SIZE.toPx() }
+    val handleOuterPx = with(density) { HANDLE_HIT_OUTER.toPx() }
+    val handleInnerPx = with(density) { HANDLE_HIT_INNER.toPx() }
+    val pillHalfSpanPx = with(density) { HANDLE_PILL_HALF_SPAN.toPx() }
 
     val shortcutSize = (width * SHORTCUT_WIDTH_RATIO).coerceIn(minShortcutPx, maxShortcutPx)
     val shortcutBottom = (height * SHORTCUT_BOTTOM_RATIO).coerceAtLeast(edgePadPx)
@@ -198,6 +216,71 @@ fun BoxScope.ItemOverlay(
     val gridRect = gridRaw?.padded(pad)
     val inlineRect = inlineRaw?.padded(pad)
 
+    val usedGridRows = remember(itemBounds, gridWidgetIds) {
+        distinctRowCount(gridWidgetIds.mapNotNull { itemBounds[it] })
+    }
+    val usedInlineRows = remember(itemBounds, inlineWidgetIds) {
+        distinctRowCount(inlineWidgetIds.mapNotNull { itemBounds[it] })
+    }
+
+    val displayGridRect = remember(
+        gridRect,
+        activeTarget,
+        composition.gridCols,
+        composition.gridRows,
+        usedGridRows,
+        unit,
+        pad,
+        edgePadPx,
+        width,
+        safeBottomPx
+    ) {
+        if (gridRect == null) null
+        else if (activeTarget != LockTarget.WIDGET_GRID || unit <= 0f) gridRect
+        else {
+            val targetCols = composition.gridCols.coerceIn(1, WidgetGrids.MAX_GRID_COLS)
+            val targetRows = composition.gridRows.coerceIn(1, WidgetGrids.MAX_GRID_ROWS)
+            val targetW = unit * FaceGrid.width(targetCols) + pad * 2f
+            val cx = (gridRect.left + gridRect.right) / 2f
+            val maxRight = (width - edgePadPx).coerceAtLeast(edgePadPx + targetW)
+            val desiredLeft = (cx - targetW / 2f).coerceIn(edgePadPx, (maxRight - targetW).coerceAtLeast(edgePadPx))
+            val desiredRight = (desiredLeft + targetW).coerceAtMost(width - edgePadPx)
+            val rowStepPx = unit * (FaceGrid.CELL + FaceGrid.GAP)
+            val extraRows = (targetRows - usedGridRows).coerceAtLeast(0)
+            val targetBottom = minOf(safeBottomPx, gridRect.bottom + extraRows * rowStepPx)
+            RectF(
+                minOf(gridRect.left, desiredLeft),
+                gridRect.top,
+                maxOf(gridRect.right, desiredRight),
+                maxOf(gridRect.bottom, targetBottom)
+            )
+        }
+    }
+
+    val displayInlineRect = remember(
+        inlineRect,
+        activeTarget,
+        composition.inlineRows,
+        usedInlineRows,
+        unit,
+        safeBottomPx
+    ) {
+        if (inlineRect == null) null
+        else if (activeTarget != LockTarget.INLINE_GRID || unit <= 0f) inlineRect
+        else {
+            val targetRows = composition.inlineRows.coerceIn(1, WidgetGrids.MAX_INLINE_ROWS)
+            val rowStepPx = unit * (0.08f + FaceGrid.GAP)
+            val extraRows = (targetRows - usedInlineRows).coerceAtLeast(0)
+            val targetBottom = minOf(safeBottomPx, inlineRect.bottom + extraRows * rowStepPx)
+            RectF(
+                inlineRect.left,
+                inlineRect.top,
+                inlineRect.right,
+                maxOf(inlineRect.bottom, targetBottom)
+            )
+        }
+    }
+
     val placeholders = remember(
         clockRect,
         gridRect,
@@ -238,8 +321,13 @@ fun BoxScope.ItemOverlay(
 
     val interactiveRects = buildMap {
         clockRect?.let { put(LockTarget.CLOCK, it) }
-        (gridRect ?: gridPlaceholder)?.let { put(LockTarget.WIDGET_GRID, it) }
-        (inlineRect ?: inlinePlaceholder)?.let { put(LockTarget.INLINE_GRID, it) }
+        (displayGridRect ?: gridPlaceholder)?.let { put(LockTarget.WIDGET_GRID, it) }
+        (displayInlineRect ?: inlinePlaceholder)?.let { put(LockTarget.INLINE_GRID, it) }
+    }
+    val resizableRects = buildMap {
+        clockRect?.let { put(LockTarget.CLOCK, it) }
+        displayGridRect?.let { put(LockTarget.WIDGET_GRID, it) }
+        displayInlineRect?.let { put(LockTarget.INLINE_GRID, it) }
     }
     val draggableRawRects = buildMap {
         clockRaw?.let { put(LockTarget.CLOCK, it) }
@@ -255,11 +343,21 @@ fun BoxScope.ItemOverlay(
 
     var guides by remember { mutableStateOf(SnapResult()) }
     var activeDragging by remember { mutableStateOf(false) }
+    var activeResizing by remember { mutableStateOf(false) }
+    var activeResizeHandle by remember { mutableStateOf<ResizeHandle?>(null) }
     var liveGridDocked by remember(composition.gridDocked) { mutableStateOf(composition.gridDocked) }
     var liveInlineDocked by remember(composition.inlineDocked) { mutableStateOf(composition.inlineDocked) }
 
+    LaunchedEffect(activeResizing, composition.gridCols, composition.gridRows, composition.inlineRows) {
+        if (activeResizing) {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        }
+    }
+
     val currentComposition by rememberUpdatedState(composition)
+    val currentItemState by rememberUpdatedState(itemState)
     val currentTargets by rememberUpdatedState(interactiveRects)
+    val currentResizables by rememberUpdatedState(resizableRects)
     val currentDraggables by rememberUpdatedState(draggableRawRects)
     val currentLeftShortcut by rememberUpdatedState(leftShortcutRect)
     val currentRightShortcut by rememberUpdatedState(rightShortcutRect)
@@ -269,9 +367,14 @@ fun BoxScope.ItemOverlay(
     val currentUnit by rememberUpdatedState(unit)
     val currentFrameLeft by rememberUpdatedState(frameLeft)
     val currentFrameTop by rememberUpdatedState(frameTop)
+    val currentWidth by rememberUpdatedState(width)
     val currentHeight by rememberUpdatedState(height)
+    val currentSafeBottom by rememberUpdatedState(safeBottomPx)
     val currentSelect by rememberUpdatedState(onSelectTarget)
     val currentDrag by rememberUpdatedState(onDrag)
+    val currentClockTransform by rememberUpdatedState(onClockTransform)
+    val currentGridSizeChange by rememberUpdatedState(onGridSizeChange)
+    val currentInlineRowsChange by rememberUpdatedState(onInlineRowsChange)
     val currentDragEnd by rememberUpdatedState(onDragEnd)
     val currentToggleWidgetsPosition by rememberUpdatedState(onToggleWidgetsPosition)
 
@@ -291,25 +394,91 @@ fun BoxScope.ItemOverlay(
             ?.let { it to null }
     }
 
+    fun hitResizeHandle(position: Offset): Pair<LockTarget, ResizeHandle>? {
+        val selected = currentActive ?: return null
+        val rect = currentResizables[selected] ?: return null
+        val allowCorners = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID
+        val allowHorizontal = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID
+        val allowVertical = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID || selected == LockTarget.INLINE_GRID
+
+        val innerX = minOf(handleInnerPx, rect.width() * 0.25f)
+        val innerY = minOf(handleInnerPx, rect.height() * 0.25f)
+
+        if (allowCorners) {
+            val inLeft = position.x in (rect.left - handleOuterPx)..(rect.left + innerX)
+            val inRight = position.x in (rect.right - innerX)..(rect.right + handleOuterPx)
+            val inTop = position.y in (rect.top - handleOuterPx)..(rect.top + innerY)
+            val inBottom = position.y in (rect.bottom - innerY)..(rect.bottom + handleOuterPx)
+            when {
+                inLeft && inTop -> return selected to ResizeHandle.TOP_LEFT
+                inRight && inTop -> return selected to ResizeHandle.TOP_RIGHT
+                inLeft && inBottom -> return selected to ResizeHandle.BOTTOM_LEFT
+                inRight && inBottom -> return selected to ResizeHandle.BOTTOM_RIGHT
+            }
+        }
+
+        val cx = (rect.left + rect.right) / 2f
+        val cy = (rect.top + rect.bottom) / 2f
+        val halfH = minOf(pillHalfSpanPx, rect.width() * 0.28f).coerceAtLeast(handleInnerPx)
+        val halfV = minOf(pillHalfSpanPx, rect.height() * 0.28f).coerceAtLeast(handleInnerPx)
+        val edgeInnerX = minOf(handleInnerPx * 0.85f, rect.width() * 0.22f)
+        val edgeInnerY = minOf(handleInnerPx * 0.85f, rect.height() * 0.22f)
+
+        if (allowVertical) {
+            if (position.x in (cx - halfH)..(cx + halfH)) {
+                if (position.y in (rect.top - handleOuterPx)..(rect.top + edgeInnerY)) {
+                    return selected to ResizeHandle.TOP
+                }
+                if (position.y in (rect.bottom - edgeInnerY)..(rect.bottom + handleOuterPx)) {
+                    return selected to ResizeHandle.BOTTOM
+                }
+            }
+        }
+        if (allowHorizontal) {
+            if (position.y in (cy - halfV)..(cy + halfV)) {
+                if (position.x in (rect.left - handleOuterPx)..(rect.left + edgeInnerX)) {
+                    return selected to ResizeHandle.LEFT
+                }
+                if (position.x in (rect.right - edgeInnerX)..(rect.right + handleOuterPx)) {
+                    return selected to ResizeHandle.RIGHT
+                }
+            }
+        }
+        return null
+    }
+
     Box(
         Modifier
             .matchParentSize()
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val hitPair = hitAt(down.position)
+                    val resizeHit = hitResizeHandle(down.position)
+                    val hitPair = if (resizeHit != null) resizeHit.first to null else hitAt(down.position)
                     val hit = hitPair?.first
                     val hitSlot = hitPair?.second
                     val unitAtDown = currentUnit
                     val frameLeftAtDown = currentFrameLeft
                     val frameTopAtDown = currentFrameTop
                     val rawStart = hit?.let { currentDraggables[it] }?.let(::RectF)
+                    val resizeStartRect = resizeHit?.first?.let { currentResizables[it] }?.let(::RectF)
                     val startBoundsByGroup = if (hit != null && hit != LockTarget.SHORTCUTS && unitAtDown > 0f) {
                         currentDraggables.mapValues { (_, rect) ->
                             rect.toBounds(frameLeftAtDown, frameTopAtDown, unitAtDown)
                         }
                     } else emptyMap()
                     val startBounds = startBoundsByGroup[hit]
+
+                    val clockItemAtDown = currentComposition.clockItem
+                    val stateAtDown = currentItemState
+                    val startClockScale = clockItemAtDown?.scale(stateAtDown) ?: 1f
+                    val startClockWidthStretch = clockItemAtDown?.widthStretch(stateAtDown) ?: 1f
+                    val startClockHeightStretch = clockItemAtDown?.heightStretch(stateAtDown) ?: 1f
+                    val startGridCols = currentComposition.gridCols
+                    val startGridRows = currentComposition.gridRows
+                    val startInlineRows = currentComposition.inlineRows
+                    var lastSentGridSize = startGridCols to startGridRows
+                    var lastSentInlineRows = startInlineRows
 
                     liveGridDocked = currentComposition.gridDocked
                     liveInlineDocked = currentComposition.inlineDocked
@@ -318,6 +487,7 @@ fun BoxScope.ItemOverlay(
                     var appliedDeltas = startBoundsByGroup.keys.associateWith { 0f to 0f }
                     var movedBeyondSlop = false
                     var dragging = false
+                    var resizing = false
                     val slop = viewConfiguration.touchSlop
 
                     while (true) {
@@ -328,12 +498,120 @@ fun BoxScope.ItemOverlay(
                         totalPx += change.positionChange()
                         if (!movedBeyondSlop && totalPx.getDistance() > slop) {
                             movedBeyondSlop = true
-                            if (hit != null && hit != LockTarget.SHORTCUTS && startBounds != null) {
+                            if (resizeHit != null && resizeStartRect != null) {
+                                resizing = true
+                                activeResizing = true
+                                activeResizeHandle = resizeHit.second
+                                if (currentActive != resizeHit.first) {
+                                    currentSelect(resizeHit.first, null, false)
+                                }
+                            } else if (hit != null && hit != LockTarget.SHORTCUTS && startBounds != null) {
                                 dragging = true
                                 activeDragging = true
-                                if (currentActive != hit) currentSelect(hit, null)
+                                if (currentActive != hit) {
+                                    currentSelect(hit, null, false)
+                                }
                             }
                         }
+
+                        if (resizing && resizeHit != null && resizeStartRect != null) {
+                            change.consume()
+                            val u = currentUnit.takeIf { it > 0f } ?: continue
+                            val handle = resizeHit.second
+                            val startW = resizeStartRect.width().coerceAtLeast(minTouch)
+                            val startH = resizeStartRect.height().coerceAtLeast(minTouch)
+                            val sx = when (handle) {
+                                ResizeHandle.TOP_RIGHT, ResizeHandle.BOTTOM_RIGHT, ResizeHandle.RIGHT -> 1f
+                                ResizeHandle.TOP_LEFT, ResizeHandle.BOTTOM_LEFT, ResizeHandle.LEFT -> -1f
+                                ResizeHandle.TOP, ResizeHandle.BOTTOM -> 0f
+                            }
+                            val sy = when (handle) {
+                                ResizeHandle.BOTTOM_LEFT, ResizeHandle.BOTTOM_RIGHT, ResizeHandle.BOTTOM -> 1f
+                                ResizeHandle.TOP_LEFT, ResizeHandle.TOP_RIGHT, ResizeHandle.TOP -> -1f
+                                ResizeHandle.LEFT, ResizeHandle.RIGHT -> 0f
+                            }
+
+                            when (resizeHit.first) {
+                                LockTarget.CLOCK -> {
+                                    val maxW = (currentWidth - edgePadPx * 2f).coerceAtLeast(minTouch)
+                                    val maxH = (currentSafeBottom - edgePadPx).coerceAtLeast(minTouch)
+                                    val maxScaleFactor = minOf(maxW / startW, maxH / startH)
+                                    when (handle) {
+                                        ResizeHandle.TOP_LEFT,
+                                        ResizeHandle.TOP_RIGHT,
+                                        ResizeHandle.BOTTOM_LEFT,
+                                        ResizeHandle.BOTTOM_RIGHT -> {
+                                            val rx = (startW + sx * totalPx.x * 2f) / startW
+                                            val ry = (startH + sy * totalPx.y * 1.5f) / startH
+                                            val factor = ((rx + ry) * 0.5f).coerceIn(0.35f, maxOf(1f, maxScaleFactor))
+                                            val nextScale = (startClockScale * factor).coerceIn(
+                                                MIN_CLOCK_SCALE,
+                                                minOf(MAX_CLOCK_SCALE, startClockScale * maxScaleFactor).coerceAtLeast(MIN_CLOCK_SCALE)
+                                            )
+                                            currentClockTransform(
+                                                currentItemState,
+                                                nextScale,
+                                                startClockWidthStretch,
+                                                startClockHeightStretch
+                                            )
+                                        }
+
+                                        ResizeHandle.LEFT, ResizeHandle.RIGHT -> {
+                                            val factor = ((startW + sx * totalPx.x * 2f) / startW).coerceIn(0.35f, maxOf(1f, maxW / startW))
+                                            val maxWStretch = minOf(MAX_CLOCK_STRETCH, startClockWidthStretch * (maxW / startW))
+                                                .coerceAtLeast(MIN_CLOCK_STRETCH)
+                                            val nextWidthStretch = (startClockWidthStretch * factor).coerceIn(MIN_CLOCK_STRETCH, maxWStretch)
+                                            currentClockTransform(
+                                                currentItemState,
+                                                startClockScale,
+                                                nextWidthStretch,
+                                                startClockHeightStretch
+                                            )
+                                        }
+
+                                        ResizeHandle.TOP, ResizeHandle.BOTTOM -> {
+                                            val factor = ((startH + sy * totalPx.y * 1.5f) / startH).coerceIn(0.35f, maxOf(1f, maxH / startH))
+                                            val maxHStretch = minOf(MAX_CLOCK_STRETCH, startClockHeightStretch * (maxH / startH))
+                                                .coerceAtLeast(MIN_CLOCK_STRETCH)
+                                            val nextHeightStretch = (startClockHeightStretch * factor).coerceIn(MIN_CLOCK_STRETCH, maxHStretch)
+                                            currentClockTransform(
+                                                currentItemState,
+                                                startClockScale,
+                                                startClockWidthStretch,
+                                                nextHeightStretch
+                                            )
+                                        }
+                                    }
+                                }
+
+                                LockTarget.WIDGET_GRID -> {
+                                    val cellStepPx = (u * (FaceGrid.CELL + FaceGrid.GAP)).coerceAtLeast(minTouch * 0.6f)
+                                    val deltaCols = if (sx != 0f) (sx * totalPx.x * 2f / cellStepPx).roundToInt() else 0
+                                    val deltaRows = if (sy != 0f) (sy * totalPx.y / cellStepPx).roundToInt() else 0
+                                    val nextCols = (startGridCols + deltaCols).coerceIn(1, WidgetGrids.MAX_GRID_COLS)
+                                    val nextRows = (startGridRows + deltaRows).coerceIn(1, WidgetGrids.MAX_GRID_ROWS)
+                                    val targetSize = nextCols to nextRows
+                                    if (targetSize != lastSentGridSize) {
+                                        lastSentGridSize = targetSize
+                                        currentGridSizeChange(currentItemState, nextCols, nextRows)
+                                    }
+                                }
+
+                                LockTarget.INLINE_GRID -> {
+                                    val rowStepPx = (u * (0.08f + FaceGrid.GAP)).coerceAtLeast(minTouch * 0.55f)
+                                    val deltaRows = if (sy != 0f) (sy * totalPx.y / rowStepPx).roundToInt() else 0
+                                    val nextRows = (startInlineRows + deltaRows).coerceIn(1, WidgetGrids.MAX_INLINE_ROWS)
+                                    if (nextRows != lastSentInlineRows) {
+                                        lastSentInlineRows = nextRows
+                                        currentInlineRowsChange(currentItemState, nextRows)
+                                    }
+                                }
+
+                                LockTarget.SHORTCUTS -> Unit
+                            }
+                            continue
+                        }
+
                         if (!dragging || hit == null || rawStart == null || startBounds == null) continue
                         val u = currentUnit.takeIf { it > 0f } ?: continue
                         change.consume()
@@ -399,11 +677,13 @@ fun BoxScope.ItemOverlay(
                     }
 
                     guides = SnapResult()
-                    if (dragging) {
+                    if (resizing || dragging) {
+                        activeResizing = false
+                        activeResizeHandle = null
                         activeDragging = false
                         currentDragEnd()
                     } else if (!movedBeyondSlop) {
-                        currentSelect(hit, hitSlot)
+                        currentSelect(hit, hitSlot, hit != null)
                     }
                 }
             }
@@ -449,61 +729,78 @@ fun BoxScope.ItemOverlay(
     }
 
     clockRect?.let { rect ->
+        val isSelected = activeTarget == LockTarget.CLOCK
         SelectionZoneFrame(
             rect = rect,
-            selected = activeTarget == LockTarget.CLOCK,
-            dragging = activeDragging && activeTarget == LockTarget.CLOCK,
+            selected = isSelected,
+            dragging = activeDragging && isSelected,
             columns = 1,
-            animate = !activeDragging
+            rows = 1,
+            allowCorners = true,
+            allowHorizontalEdges = true,
+            allowVerticalEdges = true,
+            activeHandle = if (isSelected && activeResizing) activeResizeHandle else null,
+            animate = !activeDragging && !activeResizing
         )
     }
 
-    gridRect?.let { rect ->
+    displayGridRect?.let { rect ->
+        val isSelected = activeTarget == LockTarget.WIDGET_GRID
         SelectionZoneFrame(
             rect = rect,
-            selected = activeTarget == LockTarget.WIDGET_GRID,
-            dragging = activeDragging && activeTarget == LockTarget.WIDGET_GRID,
-            columns = FaceGrid.ROW_CELLS,
-            animate = !activeDragging
+            selected = isSelected,
+            dragging = activeDragging && isSelected,
+            columns = composition.gridCols.coerceIn(1, WidgetGrids.MAX_GRID_COLS),
+            rows = composition.gridRows.coerceIn(1, WidgetGrids.MAX_GRID_ROWS),
+            allowCorners = true,
+            allowHorizontalEdges = true,
+            allowVerticalEdges = true,
+            activeHandle = if (isSelected && activeResizing) activeResizeHandle else null,
+            animate = !activeDragging && !activeResizing
         )
     }
 
-    inlineRect?.let { rect ->
+    displayInlineRect?.let { rect ->
+        val isSelected = activeTarget == LockTarget.INLINE_GRID
         SelectionZoneFrame(
             rect = rect,
-            selected = activeTarget == LockTarget.INLINE_GRID,
-            dragging = activeDragging && activeTarget == LockTarget.INLINE_GRID,
-            columns = WidgetGrids.MAX_INLINE_ITEMS,
-            animate = !activeDragging
+            selected = isSelected,
+            dragging = activeDragging && isSelected,
+            columns = 1,
+            rows = composition.inlineRows.coerceIn(1, WidgetGrids.MAX_INLINE_ROWS),
+            allowCorners = false,
+            allowHorizontalEdges = false,
+            allowVerticalEdges = true,
+            activeHandle = if (isSelected && activeResizing) activeResizeHandle else null,
+            animate = !activeDragging && !activeResizing
         )
     }
 
-    val bottomMostWidgetRect = remember(gridRect, gridPlaceholder, inlineRect, inlinePlaceholder) {
-        listOfNotNull(gridRect ?: gridPlaceholder, inlineRect ?: inlinePlaceholder)
+    val bottomMostWidgetRect = remember(displayGridRect, gridPlaceholder, displayInlineRect, inlinePlaceholder) {
+        listOfNotNull(displayGridRect ?: gridPlaceholder, displayInlineRect ?: inlinePlaceholder)
             .maxByOrNull { it.bottom }
     }
-    val topMostWidgetRect = remember(gridRect, gridPlaceholder, inlineRect, inlinePlaceholder) {
-        listOfNotNull(gridRect ?: gridPlaceholder, inlineRect ?: inlinePlaceholder)
+    val topMostWidgetRect = remember(displayGridRect, gridPlaceholder, displayInlineRect, inlinePlaceholder) {
+        listOfNotNull(displayGridRect ?: gridPlaceholder, displayInlineRect ?: inlinePlaceholder)
             .minByOrNull { it.top }
     }
 
     val widgetSelected = activeTarget == LockTarget.WIDGET_GRID || activeTarget == LockTarget.INLINE_GRID
-    if (widgetSelected && bottomMostWidgetRect != null && topMostWidgetRect != null && !activeDragging && unit > 0f) {
+    if (widgetSelected && bottomMostWidgetRect != null && topMostWidgetRect != null && !activeDragging && !activeResizing && unit > 0f) {
         val buttonSize = 34.dp
         val buttonPx = with(density) { buttonSize.toPx() }
         val btnRadius = buttonPx / 2f
         val btnGap = with(density) { 8.dp.toPx() }
         val activeWidgetRect = when (activeTarget) {
-            LockTarget.WIDGET_GRID -> gridRect ?: gridPlaceholder ?: bottomMostWidgetRect
-            LockTarget.INLINE_GRID -> inlineRect ?: inlinePlaceholder ?: bottomMostWidgetRect
-            else -> bottomMostWidgetRect
+            LockTarget.WIDGET_GRID -> displayGridRect ?: gridPlaceholder ?: bottomMostWidgetRect
+            LockTarget.INLINE_GRID -> displayInlineRect ?: inlinePlaceholder ?: bottomMostWidgetRect
         }
         val cx = ((activeWidgetRect.left + activeWidgetRect.right) / 2f)
             .coerceIn(edgePadPx + btnRadius, (width - edgePadPx - btnRadius).coerceAtLeast(edgePadPx + btnRadius))
         val minBtnY = edgePadPx + btnRadius
         val maxBtnY = (safeBottomPx - btnRadius - with(density) { 4.dp.toPx() }).coerceAtLeast(minBtnY)
 
-        val toggleObstacles = listOfNotNull(clockRect, gridRect, inlineRect, gridPlaceholder, inlinePlaceholder)
+        val toggleObstacles = listOfNotNull(clockRect, displayGridRect, displayInlineRect, gridPlaceholder, inlinePlaceholder)
         val candidateYs = buildList {
             if (composition.widgetsAbove) {
                 if (clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
@@ -673,10 +970,16 @@ private fun SelectionZoneFrame(
     selected: Boolean,
     dragging: Boolean,
     columns: Int,
+    rows: Int,
+    allowCorners: Boolean,
+    allowHorizontalEdges: Boolean,
+    allowVerticalEdges: Boolean,
+    activeHandle: ResizeHandle?,
     animate: Boolean
 ) {
     val density = LocalDensity.current
     val onInk = OnInk
+    val primaryColor = MaterialTheme.colorScheme.primary
     val spec = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
     val animX by animateFloatAsState(rect.left, spec, label = "zoneLeft")
     val animY by animateFloatAsState(rect.top, spec, label = "zoneTop")
@@ -689,7 +992,7 @@ private fun SelectionZoneFrame(
 
     val frameColor by animateColorAsState(
         when {
-            dragging -> MaterialTheme.colorScheme.primary
+            dragging || activeHandle != null -> primaryColor
             selected -> onInk.copy(alpha = 0.96f)
             else -> onInk.copy(alpha = 0.2f)
         },
@@ -725,7 +1028,7 @@ private fun SelectionZoneFrame(
             style = Stroke(1.dp.toPx())
         )
 
-        if (columns > 1) {
+        if (columns > 1 || rows > 1) {
             val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
             for (c in 1 until columns) {
                 val gx = size.width * c / columns
@@ -737,40 +1040,97 @@ private fun SelectionZoneFrame(
                     pathEffect = dash
                 )
             }
+            for (r in 1 until rows) {
+                val gy = size.height * r / rows
+                drawLine(
+                    color = frameColor.copy(alpha = 0.32f),
+                    start = Offset(4.dp.toPx(), gy),
+                    end = Offset(size.width - 4.dp.toPx(), gy),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = dash
+                )
+            }
         }
 
-        val stroke = Stroke(2.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-        val arm = minOf(14.dp.toPx(), (minOf(size.width, size.height) - corner * 2f).coerceAtLeast(4.dp.toPx()) * 0.45f)
-        val c2 = corner * 2f
+        if (allowCorners) {
+            val arm = minOf(15.dp.toPx(), (minOf(size.width, size.height) - corner * 2f).coerceAtLeast(4.dp.toPx()) * 0.45f)
+            val c2 = corner * 2f
 
-        val tl = Path().apply {
-            moveTo(0f, corner + arm)
-            lineTo(0f, corner)
-            arcTo(Rect(0f, 0f, c2, c2), 180f, 90f, false)
-            lineTo(corner + arm, 0f)
+            fun cornerStroke(handle: ResizeHandle): Stroke {
+                val w = if (activeHandle == handle) 4.dp.toPx() else 3.2.dp.toPx()
+                return Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            }
+
+            fun cornerColor(handle: ResizeHandle): Color =
+                if (activeHandle == handle) primaryColor else frameColor
+
+            val tl = Path().apply {
+                moveTo(0f, corner + arm)
+                lineTo(0f, corner)
+                arcTo(Rect(0f, 0f, c2, c2), 180f, 90f, false)
+                lineTo(corner + arm, 0f)
+            }
+            val tr = Path().apply {
+                moveTo(size.width - corner - arm, 0f)
+                lineTo(size.width - corner, 0f)
+                arcTo(Rect(size.width - c2, 0f, size.width, c2), -90f, 90f, false)
+                lineTo(size.width, corner + arm)
+            }
+            val br = Path().apply {
+                moveTo(size.width, size.height - corner - arm)
+                lineTo(size.width, size.height - corner)
+                arcTo(Rect(size.width - c2, size.height - c2, size.width, size.height), 0f, 90f, false)
+                lineTo(size.width - corner - arm, size.height)
+            }
+            val bl = Path().apply {
+                moveTo(corner + arm, size.height)
+                lineTo(corner, size.height)
+                arcTo(Rect(0f, size.height - c2, c2, size.height), 90f, 90f, false)
+                lineTo(0f, size.height - corner - arm)
+            }
+            drawPath(tl, cornerColor(ResizeHandle.TOP_LEFT), style = cornerStroke(ResizeHandle.TOP_LEFT))
+            drawPath(tr, cornerColor(ResizeHandle.TOP_RIGHT), style = cornerStroke(ResizeHandle.TOP_RIGHT))
+            drawPath(br, cornerColor(ResizeHandle.BOTTOM_RIGHT), style = cornerStroke(ResizeHandle.BOTTOM_RIGHT))
+            drawPath(bl, cornerColor(ResizeHandle.BOTTOM_LEFT), style = cornerStroke(ResizeHandle.BOTTOM_LEFT))
         }
-        val tr = Path().apply {
-            moveTo(size.width - corner - arm, 0f)
-            lineTo(size.width - corner, 0f)
-            arcTo(Rect(size.width - c2, 0f, size.width, c2), -90f, 90f, false)
-            lineTo(size.width, corner + arm)
+
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val hPillHalf = minOf(12.dp.toPx(), (size.width - corner * 2f).coerceAtLeast(8.dp.toPx()) * 0.24f)
+        val vPillHalf = minOf(12.dp.toPx(), (size.height - corner * 2f).coerceAtLeast(8.dp.toPx()) * 0.24f)
+
+        if (allowVerticalEdges && hPillHalf > 2f) {
+            drawLine(
+                color = if (activeHandle == ResizeHandle.TOP) primaryColor else frameColor,
+                start = Offset(cx - hPillHalf, 0f),
+                end = Offset(cx + hPillHalf, 0f),
+                strokeWidth = if (activeHandle == ResizeHandle.TOP) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = if (activeHandle == ResizeHandle.BOTTOM) primaryColor else frameColor,
+                start = Offset(cx - hPillHalf, size.height),
+                end = Offset(cx + hPillHalf, size.height),
+                strokeWidth = if (activeHandle == ResizeHandle.BOTTOM) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                cap = StrokeCap.Round
+            )
         }
-        val br = Path().apply {
-            moveTo(size.width, size.height - corner - arm)
-            lineTo(size.width, size.height - corner)
-            arcTo(Rect(size.width - c2, size.height - c2, size.width, size.height), 0f, 90f, false)
-            lineTo(size.width - corner - arm, size.height)
+        if (allowHorizontalEdges && vPillHalf > 2f) {
+            drawLine(
+                color = if (activeHandle == ResizeHandle.LEFT) primaryColor else frameColor,
+                start = Offset(0f, cy - vPillHalf),
+                end = Offset(0f, cy + vPillHalf),
+                strokeWidth = if (activeHandle == ResizeHandle.LEFT) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = if (activeHandle == ResizeHandle.RIGHT) primaryColor else frameColor,
+                start = Offset(size.width, cy - vPillHalf),
+                end = Offset(size.width, cy + vPillHalf),
+                strokeWidth = if (activeHandle == ResizeHandle.RIGHT) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                cap = StrokeCap.Round
+            )
         }
-        val bl = Path().apply {
-            moveTo(corner + arm, size.height)
-            lineTo(corner, size.height)
-            arcTo(Rect(0f, size.height - c2, c2, size.height), 90f, 90f, false)
-            lineTo(0f, size.height - corner - arm)
-        }
-        drawPath(tl, frameColor, style = stroke)
-        drawPath(tr, frameColor, style = stroke)
-        drawPath(br, frameColor, style = stroke)
-        drawPath(bl, frameColor, style = stroke)
     }
 }
 
@@ -815,6 +1175,20 @@ private fun SmartCenterGuides(
     }
 }
 
+private fun distinctRowCount(bounds: List<ItemBounds>): Int {
+    if (bounds.isEmpty()) return 1
+    val tops = bounds.map { it.top }.sorted()
+    var rows = 1
+    var lastTop = tops[0]
+    for (i in 1 until tops.size) {
+        if (tops[i] - lastTop > 0.04f) {
+            rows++
+            lastTop = tops[i]
+        }
+    }
+    return rows
+}
+
 private fun Collection<RectF>.union(): RectF? {
     if (isEmpty()) return null
     return RectF(minOf { it.left }, minOf { it.top }, maxOf { it.right }, maxOf { it.bottom })
@@ -837,11 +1211,18 @@ private val INLINE_PLACEHOLDER_HEIGHT = 48.dp
 private val MIN_TOUCH_SIZE = 48.dp
 private val SHORTCUT_MIN_SIZE = 30.dp
 private val SHORTCUT_MAX_SIZE = 52.dp
+private val HANDLE_HIT_OUTER = 18.dp
+private val HANDLE_HIT_INNER = 16.dp
+private val HANDLE_PILL_HALF_SPAN = 26.dp
 private const val SHORTCUT_WIDTH_RATIO = 0.135f
 private const val SHORTCUT_BOTTOM_RATIO = 0.036f
 private const val SHORTCUT_SIDE_RATIO = 0.068f
 private const val INLINE_PLACEHOLDER_RATIO = 0.72f
 private const val HORIZONTAL_EDGE = 0.0225f
+private const val MIN_CLOCK_SCALE = 0.45f
+private const val MAX_CLOCK_SCALE = 1.85f
+private const val MIN_CLOCK_STRETCH = 0.45f
+private const val MAX_CLOCK_STRETCH = 1.75f
 
 @Composable
 private fun GridPositionToggleButton(

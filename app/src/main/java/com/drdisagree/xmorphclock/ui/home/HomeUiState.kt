@@ -31,7 +31,8 @@ data class HomeUiState(
     val availableAffordances: List<LockscreenAffordance> = LockscreenAffordance.defaults(),
     val shortcutLeft: LockscreenAffordance = LockscreenAffordance(SystemShortcut.DEFAULT_LEFT.id),
     val shortcutRight: LockscreenAffordance = LockscreenAffordance(SystemShortcut.DEFAULT_RIGHT.id),
-    val activeShortcutSlot: ShortcutSlot = ShortcutSlot.LEFT
+    val activeShortcutSlot: ShortcutSlot = ShortcutSlot.LEFT,
+    val sheetOpen: Boolean = false
 ) {
     val clockPreset: FacePreset?
         get() = faces[FaceKind.CLOCK].orEmpty().let { list -> list.firstOrNull { it.style == clockStyle } ?: list.firstOrNull() }

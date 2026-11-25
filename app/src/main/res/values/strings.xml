@@ -621,10 +621,10 @@
     <string name="sheet_inline_1x2">Inline widgets</string>
     <string name="slot_add_widgets">Widgets</string>
     <string name="slot_add_inline">Inline</string>
-    <string name="widget_grid_full">Widget grid is full (4/4 slots)</string>
-    <string name="inline_grid_full">Inline row is full (2/2 slots)</string>
-    <string name="slots_used_grid">%1$d/4</string>
-    <string name="slots_used_inline">%1$d/2</string>
+    <string name="widget_grid_full">Widget grid is full</string>
+    <string name="inline_grid_full">Not enough screen space for more inline widgets</string>
+    <string name="slots_used_grid">%1$d/%2$d</string>
+    <string name="slots_used_inline">%1$d</string>
     <string name="action_custom">Custom</string>
     <string name="action_edit_selected">Edit</string>
     <string name="sheet_shortcuts">Shortcuts</string>

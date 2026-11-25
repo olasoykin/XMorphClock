@@ -37,14 +37,16 @@ enum class WidgetZone {
 object WidgetGrids {
 
     const val MAX_GRID_CELLS = FaceGrid.ROW_CELLS
-    const val MAX_INLINE_ITEMS = 2
+    const val MAX_GRID_COLS = FaceGrid.ROW_CELLS
+    const val MAX_GRID_ROWS = 6
+    const val MAX_INLINE_ROWS = 6
+    const val INLINE_ITEM_GAP = 0.036f
+    const val DEFAULT_INLINE_ITEM_WIDTH = 0.36f
 
     private const val INLINE_CATEGORY = "inline"
     private const val EDGE = 0.0225f
     private const val MIN_TOP = 0.02f
-    private const val SMALL_SCALE = 0.62f
     private const val INLINE_HEIGHT = 0.08f
-    private const val INLINE_HALF_GAP = 0.024f
     private const val GRID_GAP = 0.04f
     private const val ZONE_GAP = 0.018f
     const val INLINE_PLACEHOLDER_RATIO = 0.72f
@@ -52,6 +54,20 @@ object WidgetGrids {
     private const val EPS = 0.0005f
     private const val AREA_EPS = 1e-6f
     private const val PUSH_SUBSTEP = 0.04f
+
+    data class GridRow(
+        val items: List<CompositionItem>,
+        val widths: List<Float>,
+        val width: Float,
+        val height: Float
+    )
+
+    data class InlineRow(
+        val items: List<CompositionItem>,
+        val widths: List<Float>,
+        val totalWidth: Float,
+        val height: Float
+    )
 
     fun zoneOf(face: ClockFace): WidgetZone =
         if (face.category == INLINE_CATEGORY) WidgetZone.INLINE_1X2 else WidgetZone.GRID_1X4
@@ -68,9 +84,200 @@ object WidgetGrids {
     fun usedGridCells(composition: Composition, faceOf: (Int) -> ClockFace?): Int =
         gridItems(composition, faceOf).sumOf { item -> faceOf(item.style)?.let(::spanOf) ?: 1 }
 
-    fun canAdd(composition: Composition, face: ClockFace, faceOf: (Int) -> ClockFace?): Boolean = when (zoneOf(face)) {
-        WidgetZone.GRID_1X4 -> usedGridCells(composition, faceOf) + spanOf(face) <= MAX_GRID_CELLS
-        WidgetZone.INLINE_1X2 -> inlineItems(composition, faceOf).size < MAX_INLINE_ITEMS
+    fun packGridRows(
+        items: List<CompositionItem>,
+        cols: Int,
+        faceOf: (Int) -> ClockFace?
+    ): List<GridRow> {
+        if (items.isEmpty()) return emptyList()
+        val effectiveCols = cols.coerceIn(1, MAX_GRID_COLS)
+        val cellW = FaceGrid.CELL
+        val gap = FaceGrid.GAP
+        val rows = ArrayList<GridRow>()
+        var rowItems = ArrayList<CompositionItem>()
+        var rowWidths = ArrayList<Float>()
+        var rowCells = 0
+
+        fun flushRow() {
+            if (rowItems.isEmpty()) return
+            val w = rowWidths.sum() + gap * (rowItems.size - 1)
+            val h = rowItems.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(cellW)
+            rows += GridRow(rowItems, rowWidths, w, h)
+            rowItems = ArrayList()
+            rowWidths = ArrayList()
+            rowCells = 0
+        }
+
+        for (item in items) {
+            val span = (faceOf(item.style)?.let(::spanOf) ?: 1).coerceIn(1, effectiveCols)
+            if (rowItems.isNotEmpty() && rowCells + span > effectiveCols) {
+                flushRow()
+            }
+            rowItems += item
+            rowWidths += FaceGrid.width(span)
+            rowCells += span
+        }
+        flushRow()
+        return rows
+    }
+
+    fun minColsForGrid(composition: Composition, faceOf: (Int) -> ClockFace?): Int {
+        val items = gridItems(composition, faceOf)
+        if (items.isEmpty()) return 1
+        val maxSpan = items.maxOf { faceOf(it.style)?.let(::spanOf) ?: 1 }.coerceIn(1, MAX_GRID_COLS)
+        val rowsAllowed = composition.gridRows.coerceIn(1, MAX_GRID_ROWS)
+        for (cols in maxSpan..MAX_GRID_COLS) {
+            if (packGridRows(items, cols, faceOf).size <= rowsAllowed) return cols
+        }
+        return MAX_GRID_COLS
+    }
+
+    fun minRowsForGrid(composition: Composition, cols: Int, faceOf: (Int) -> ClockFace?): Int {
+        val items = gridItems(composition, faceOf)
+        if (items.isEmpty()) return 1
+        return packGridRows(items, cols.coerceIn(1, MAX_GRID_COLS), faceOf).size.coerceIn(1, MAX_GRID_ROWS)
+    }
+
+    fun maxFittingGridRows(
+        composition: Composition,
+        faceOf: (Int) -> ClockFace?,
+        maxY: Float = DEFAULT_BOTTOM
+    ): Int {
+        val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+        val avail = (maxBottom - MIN_TOP - 0.24f).coerceAtLeast(FaceGrid.CELL)
+        val items = gridItems(composition, faceOf)
+        val rowH = items.maxOfOrNull { heightOf(faceOf(it.style)) }?.coerceAtLeast(FaceGrid.CELL) ?: FaceGrid.CELL
+        val step = rowH + FaceGrid.GAP
+        val fit = ((avail + FaceGrid.GAP) / step).toInt().coerceIn(1, MAX_GRID_ROWS)
+        return maxOf(fit, minRowsForGrid(composition, composition.gridCols, faceOf))
+    }
+
+    fun estimateInlineWidth(
+        item: CompositionItem,
+        faceOf: (Int) -> ClockFace?,
+        measuredWidths: Map<Int, Float> = emptyMap()
+    ): Float {
+        measuredWidths[item.id]?.takeIf { it.isFinite() && it > 0.02f }?.let {
+            return it.coerceIn(0.08f, 1f - EDGE * 2f)
+        }
+        val face = faceOf(item.style) ?: return DEFAULT_INLINE_ITEM_WIDTH
+        val root = face.large
+        (root as? StackNode)?.width?.takeIf { it > 0.02f }?.let {
+            return it.coerceIn(0.08f, 1f - EDGE * 2f)
+        }
+        val layersById = face.layers.associateBy { it.id }
+        val estimated = estimateNode(root, layersById)?.width
+        return (estimated ?: DEFAULT_INLINE_ITEM_WIDTH).coerceIn(0.10f, 1f - EDGE * 2f)
+    }
+
+    fun packInlineRows(
+        items: List<CompositionItem>,
+        faceOf: (Int) -> ClockFace?,
+        measuredWidths: Map<Int, Float> = emptyMap(),
+        maxRowWidth: Float = 1f - EDGE * 2f
+    ): List<InlineRow> {
+        if (items.isEmpty()) return emptyList()
+        val rows = ArrayList<InlineRow>()
+        var rowItems = ArrayList<CompositionItem>()
+        var rowWidths = ArrayList<Float>()
+        var runningW = 0f
+
+        fun flushRow() {
+            if (rowItems.isEmpty()) return
+            val totalW = rowWidths.sum() + INLINE_ITEM_GAP * (rowItems.size - 1)
+            val rowH = rowItems.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(INLINE_HEIGHT)
+            rows += InlineRow(rowItems, rowWidths, totalW, rowH)
+            rowItems = ArrayList()
+            rowWidths = ArrayList()
+            runningW = 0f
+        }
+
+        for (item in items) {
+            val w = estimateInlineWidth(item, faceOf, measuredWidths).coerceAtMost(maxRowWidth)
+            val needed = if (rowItems.isEmpty()) w else runningW + INLINE_ITEM_GAP + w
+            if (rowItems.isNotEmpty() && needed > maxRowWidth + EPS) {
+                flushRow()
+            }
+            runningW = if (rowItems.isEmpty()) w else runningW + INLINE_ITEM_GAP + w
+            rowItems += item
+            rowWidths += w
+        }
+        flushRow()
+        return rows
+    }
+
+    fun minRowsForInline(
+        composition: Composition,
+        faceOf: (Int) -> ClockFace?,
+        measuredWidths: Map<Int, Float> = emptyMap()
+    ): Int {
+        val items = inlineItems(composition, faceOf)
+        if (items.isEmpty()) return 1
+        return packInlineRows(items, faceOf, measuredWidths).size.coerceIn(1, MAX_INLINE_ROWS)
+    }
+
+    fun maxFittingInlineRows(
+        composition: Composition,
+        faceOf: (Int) -> ClockFace?,
+        maxY: Float = DEFAULT_BOTTOM,
+        measuredWidths: Map<Int, Float> = emptyMap()
+    ): Int {
+        val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+        val avail = (maxBottom - MIN_TOP - 0.24f).coerceAtLeast(INLINE_HEIGHT)
+        val items = inlineItems(composition, faceOf)
+        val rowH = items.maxOfOrNull { heightOf(faceOf(it.style)) }?.coerceAtLeast(INLINE_HEIGHT) ?: INLINE_HEIGHT
+        val step = rowH + FaceGrid.GAP
+        val fit = ((avail + FaceGrid.GAP) / step).toInt().coerceIn(1, MAX_INLINE_ROWS)
+        return maxOf(fit, minRowsForInline(composition, faceOf, measuredWidths))
+    }
+
+    fun canAdd(
+        composition: Composition,
+        face: ClockFace,
+        faceOf: (Int) -> ClockFace?,
+        maxY: Float = DEFAULT_BOTTOM,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
+    ): Boolean = when (zoneOf(face)) {
+        WidgetZone.GRID_1X4 -> {
+            val cols = composition.gridCols.coerceIn(1, MAX_GRID_COLS)
+            val rows = composition.gridRows.coerceIn(1, MAX_GRID_ROWS)
+            val itemSpan = spanOf(face)
+            if (itemSpan > cols) {
+                false
+            } else {
+                val existing = gridItems(composition, faceOf)
+                val dummyStyle = Int.MIN_VALUE
+                val simulated = existing + CompositionItem(id = Int.MIN_VALUE, style = dummyStyle)
+                val packed = packGridRows(simulated, cols) { style ->
+                    if (style == dummyStyle) face else faceOf(style)
+                }
+                packed.size <= rows && usedGridCells(composition, faceOf) + itemSpan <= cols * rows
+            }
+        }
+
+        WidgetZone.INLINE_1X2 -> {
+            val existing = inlineItems(composition, faceOf)
+            val dummyStyle = Int.MIN_VALUE
+            val simulated = existing + CompositionItem(id = Int.MIN_VALUE, style = dummyStyle)
+            val packed = packInlineRows(
+                items = simulated,
+                faceOf = { style -> if (style == dummyStyle) face else faceOf(style) },
+                measuredWidths = measuredInlineWidths
+            )
+            if (packed.size > MAX_INLINE_ROWS) {
+                false
+            } else {
+                val gap = FaceGrid.GAP
+                val inlineH = packed.sumOf { it.height.toDouble() }.toFloat() + gap * (packed.size - 1).coerceAtLeast(0)
+                val gridRows = packGridRows(gridItems(composition, faceOf), composition.gridCols, faceOf)
+                val gridH = if (gridRows.isEmpty()) 0f else {
+                    gridRows.sumOf { it.height.toDouble() }.toFloat() + gap * (gridRows.size - 1).coerceAtLeast(0) + GRID_GAP
+                }
+                val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+                val minClockReserve = 0.22f
+                inlineH + gridH <= (maxBottom - MIN_TOP - minClockReserve).coerceAtLeast(INLINE_HEIGHT)
+            }
+        }
     }
 
     fun layoutZone(
@@ -83,35 +290,32 @@ object WidgetGrids {
         overrideCenter: FacePlacement? = null,
         centerHorizontally: Boolean = false,
         clockBounds: ItemBounds? = null,
-        widgetsAbove: Boolean = false
+        widgetsAbove: Boolean = false,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): Composition {
-        val large = itemState == ItemState.LARGE || itemState == ItemState.AOD_LARGE
-        val scale = 1f
-        val cellW = FaceGrid.CELL * scale
-        val gap = FaceGrid.GAP * scale
-        val zoneGap = GRID_GAP * scale
+        val gap = FaceGrid.GAP
+        val zoneGap = GRID_GAP
         val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
 
         return when (zone) {
             WidgetZone.GRID_1X4 -> {
                 val items = gridItems(composition, faceOf)
                 if (items.isEmpty()) return composition
-                val spans = items.map { faceOf(it.style)?.let(::spanOf) ?: 1 }
-                val widths = spans.map { s -> cellW * s + gap * (s - 1) }
-                val totalW = widths.sum() + gap * (items.size - 1)
-                val rowH = items.maxOf { item -> heightOf(faceOf(item.style)) }.coerceAtLeast(cellW)
+                val rows = packGridRows(items, composition.gridCols, faceOf)
+                val totalH = rows.sumOf { it.height.toDouble() }.toFloat() + gap * (rows.size - 1).coerceAtLeast(0)
+                val maxRowW = rows.maxOf { it.width }
 
-                val existingOrigin = overrideCenter ?: currentGridCenter(items, widths, itemState)
+                val existingOrigin = overrideCenter ?: currentGridCenter(items, itemState, faceOf)
                 val desiredCenterX = if (overrideCenter != null) overrideCenter.x else if (centerHorizontally) 0.5f else (existingOrigin?.x ?: 0.5f)
-                val centerX = clampCenterX(desiredCenterX, totalW)
+                val centerX = clampCenterX(desiredCenterX, maxRowW)
 
                 val clockSpan = clockBounds?.let { (it.top - zoneGap) to (it.bottom + zoneGap) }
                     ?: (0f to (clockBottomY + zoneGap))
-                val inlineSpan = inlineVerticalSpan(composition, itemState, faceOf, large, zoneGap)
+                val inlineSpan = inlineVerticalSpan(composition, itemState, faceOf, zoneGap, measuredInlineWidths)
                 val forbidden = listOfNotNull(clockSpan, inlineSpan)
 
                 val defaultY = if (widgetsAbove) {
-                    ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - rowH).coerceAtLeast(MIN_TOP)
+                    ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - totalH).coerceAtLeast(MIN_TOP)
                 } else {
                     (clockBounds?.bottom ?: clockBottomY) + zoneGap
                 }
@@ -127,7 +331,7 @@ object WidgetGrids {
                 }
                 val topY = findNonOverlappingY(
                     desiredTop = desiredY,
-                    rowHeight = rowH,
+                    rowHeight = totalH,
                     minTop = MIN_TOP,
                     maxBottom = maxBottom,
                     forbidden = forbidden,
@@ -135,12 +339,16 @@ object WidgetGrids {
                     clockSpan = if (overrideCenter == null) clockSpan else null
                 )
 
-                var cursor = centerX - totalW / 2f
                 val placements = HashMap<Int, FacePlacement>(items.size)
-                items.forEachIndexed { index, item ->
-                    val w = widths[index]
-                    placements[item.id] = FacePlacement(x = cursor + w / 2f, y = topY, anchor = FaceAlign.CENTER)
-                    cursor += w + gap
+                var rowY = topY
+                rows.forEach { row ->
+                    var cursor = centerX - row.width / 2f
+                    row.items.forEachIndexed { idx, item ->
+                        val w = row.widths[idx]
+                        placements[item.id] = FacePlacement(x = cursor + w / 2f, y = rowY, anchor = FaceAlign.CENTER)
+                        cursor += w + gap
+                    }
+                    rowY += row.height + gap
                 }
                 applyZonePlacements(composition, itemState, placements)
             }
@@ -148,15 +356,17 @@ object WidgetGrids {
             WidgetZone.INLINE_1X2 -> {
                 val items = inlineItems(composition, faceOf)
                 if (items.isEmpty()) return composition
-                val rowH = items.maxOf { item -> heightOf(faceOf(item.style)) }.coerceAtLeast(INLINE_HEIGHT * scale)
-                val existingOrigin = overrideCenter ?: currentInlineCenter(items, itemState)
-                val gridSpan = gridVerticalSpan(composition, itemState, faceOf, large, zoneGap)
+                val rows = packInlineRows(items, faceOf, measuredInlineWidths)
+                val totalH = rows.sumOf { it.height.toDouble() }.toFloat() + gap * (rows.size - 1).coerceAtLeast(0)
+                val maxRowW = rows.maxOf { it.totalWidth }
+                val existingOrigin = overrideCenter ?: currentInlineCenter(items, itemState, faceOf, measuredInlineWidths)
+                val gridSpan = gridVerticalSpan(composition, itemState, faceOf, zoneGap)
                 val clockSpan = clockBounds?.let { (it.top - zoneGap) to (it.bottom + zoneGap) }
                     ?: (0f to (clockBottomY + zoneGap))
                 val defaultInlineY = if (widgetsAbove) {
-                    gridSpan?.first?.minus(rowH) ?: ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - rowH)
+                    gridSpan?.first?.minus(totalH) ?: ((clockBounds?.top ?: (clockBottomY - 0.4f)) - zoneGap - totalH)
                 } else {
-                    gridSpan?.second ?: (clockBounds?.bottom?.plus(zoneGap) ?: (clockBottomY + zoneGap + cellW + zoneGap))
+                    gridSpan?.second ?: (clockBounds?.bottom?.plus(zoneGap) ?: (clockBottomY + zoneGap + FaceGrid.CELL + zoneGap))
                 }
                 val forbidden = listOfNotNull(clockSpan, gridSpan)
 
@@ -172,7 +382,7 @@ object WidgetGrids {
                 }
                 val topY = findNonOverlappingY(
                     desiredTop = desiredInlineY,
-                    rowHeight = rowH,
+                    rowHeight = totalH,
                     minTop = MIN_TOP,
                     maxBottom = maxBottom,
                     forbidden = forbidden,
@@ -181,15 +391,17 @@ object WidgetGrids {
                 )
 
                 val desiredCenterX = if (overrideCenter != null) overrideCenter.x else if (centerHorizontally) 0.5f else (existingOrigin?.x ?: 0.5f)
-                val halfGap = INLINE_HALF_GAP * scale
+                val centerX = clampCenterX(desiredCenterX, maxRowW)
                 val placements = HashMap<Int, FacePlacement>(items.size)
-                if (items.size == 1) {
-                    val centerX = clampCenterX(desiredCenterX, 0.36f * scale)
-                    placements[items[0].id] = FacePlacement(x = centerX, y = topY, anchor = FaceAlign.CENTER)
-                } else {
-                    val centerX = desiredCenterX.coerceIn(0.28f, 0.72f)
-                    placements[items[0].id] = FacePlacement(x = (centerX - halfGap).coerceAtLeast(EDGE + 0.14f), y = topY, anchor = FaceAlign.END)
-                    placements[items[1].id] = FacePlacement(x = (centerX + halfGap).coerceAtMost(1f - EDGE - 0.14f), y = topY, anchor = FaceAlign.START)
+                var rowY = topY
+                rows.forEach { row ->
+                    var cursor = centerX - row.totalWidth / 2f
+                    row.items.forEachIndexed { idx, item ->
+                        val w = row.widths[idx]
+                        placements[item.id] = FacePlacement(x = cursor + w / 2f, y = rowY, anchor = FaceAlign.CENTER)
+                        cursor += w + INLINE_ITEM_GAP
+                    }
+                    rowY += row.height + gap
                 }
                 applyZonePlacements(composition, itemState, placements)
             }
@@ -201,7 +413,8 @@ object WidgetGrids {
         itemState: ItemState,
         faceOf: (Int) -> ClockFace?,
         clockBounds: ItemBounds?,
-        maxY: Float = DEFAULT_BOTTOM
+        maxY: Float = DEFAULT_BOTTOM,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): Pair<Composition, ItemBounds?> {
         val clock = clockBounds ?: return composition to null
         val clockItem = composition.clockItem ?: return composition to clock
@@ -209,10 +422,17 @@ object WidgetGrids {
         val inline = inlineItems(composition, faceOf)
         if (grid.isEmpty() && inline.isEmpty()) return composition to clock
 
+        val gap = FaceGrid.GAP
         val zoneGap = GRID_GAP
         val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
-        val rowHGrid = if (grid.isNotEmpty()) grid.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(FaceGrid.CELL) else 0f
-        val rowHInline = if (inline.isNotEmpty()) inline.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(INLINE_HEIGHT) else 0f
+        val gridRows = packGridRows(grid, composition.gridCols, faceOf)
+        val inlineRows = packInlineRows(inline, faceOf, measuredInlineWidths)
+        val rowHGrid = if (gridRows.isEmpty()) 0f else {
+            gridRows.sumOf { it.height.toDouble() }.toFloat() + gap * (gridRows.size - 1).coerceAtLeast(0)
+        }
+        val rowHInline = if (inlineRows.isEmpty()) 0f else {
+            inlineRows.sumOf { it.height.toDouble() }.toFloat() + gap * (inlineRows.size - 1).coerceAtLeast(0)
+        }
         val totalH = rowHGrid + rowHInline + (if (grid.isNotEmpty() && inline.isNotEmpty()) zoneGap else 0f)
 
         val clockShiftY = if (composition.widgetsAbove) {
@@ -244,7 +464,8 @@ object WidgetGrids {
         largeMaxY: Float = DEFAULT_BOTTOM,
         smallMaxY: Float = DEFAULT_BOTTOM,
         largeClockBounds: ItemBounds? = null,
-        smallClockBounds: ItemBounds? = null
+        smallClockBounds: ItemBounds? = null,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): Composition {
         val grid = gridItems(composition, faceOf)
         val inline = inlineItems(composition, faceOf)
@@ -258,7 +479,7 @@ object WidgetGrids {
                 else -> null
             } ?: estimateClockBounds(clockFace, result.clockItem, state)
 
-            val (cleared, clockBounds) = ensureClockClearanceForWidgets(result, state, faceOf, rawClock, maxY)
+            val (cleared, clockBounds) = ensureClockClearanceForWidgets(result, state, faceOf, rawClock, maxY, measuredInlineWidths)
             result = cleared
             val activeClock = clockBounds ?: rawClock
             val activePaddedClock = ItemBounds(
@@ -268,17 +489,17 @@ object WidgetGrids {
                 activeClock.bottom + GRID_GAP
             )
             val gridOverlaps = grid.any { item ->
-                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                val b = widgetBoundsOf(item, state, faceOf, measuredInlineWidths) ?: return@any true
                 overlaps(b, activePaddedClock)
             }
             val inlineOverlapsClock = inline.any { item ->
-                val b = widgetBoundsOf(item, state, faceOf) ?: return@any true
+                val b = widgetBoundsOf(item, state, faceOf, measuredInlineWidths) ?: return@any true
                 overlaps(b, activePaddedClock)
             }
             val gridInlineOverlap = grid.any { g ->
-                val gb = widgetBoundsOf(g, state, faceOf) ?: return@any true
+                val gb = widgetBoundsOf(g, state, faceOf, measuredInlineWidths) ?: return@any true
                 inline.any { i ->
-                    val ib = widgetBoundsOf(i, state, faceOf) ?: return@any true
+                    val ib = widgetBoundsOf(i, state, faceOf, measuredInlineWidths) ?: return@any true
                     val paddedIb = ItemBounds(
                         ib.left - GRID_GAP * 0.5f,
                         ib.top - GRID_GAP * 0.5f,
@@ -303,7 +524,8 @@ object WidgetGrids {
                     maxY = maxY,
                     centerHorizontally = result.gridDocked,
                     clockBounds = activeClock,
-                    widgetsAbove = result.widgetsAbove
+                    widgetsAbove = result.widgetsAbove,
+                    measuredInlineWidths = measuredInlineWidths
                 )
             }
             if (needInlineLayout) {
@@ -316,7 +538,8 @@ object WidgetGrids {
                     maxY = maxY,
                     centerHorizontally = result.inlineDocked,
                     clockBounds = activeClock,
-                    widgetsAbove = result.widgetsAbove
+                    widgetsAbove = result.widgetsAbove,
+                    measuredInlineWidths = measuredInlineWidths
                 )
             }
         }
@@ -335,7 +558,9 @@ object WidgetGrids {
             ItemState.AOD_SMALL -> face.aodSmall ?: face.small
         }
         val scale = clockItem?.scale(itemState) ?: 1f
-        val node = FaceEditor.scaleNode(baseNode, scale)
+        val widthStretch = clockItem?.widthStretch(itemState) ?: 1f
+        val heightStretch = clockItem?.heightStretch(itemState) ?: 1f
+        val node = FaceEditor.stretchNode(FaceEditor.scaleNode(baseNode, scale), face.layers, widthStretch, heightStretch)
         val placement = clockItem?.placement(itemState) ?: node.placement
         val layersById = face.layers.associateBy { it.id }
         val box = estimateNode(node, layersById) ?: return ItemBounds.of(placement, 0.5f, 0.25f)
@@ -355,12 +580,17 @@ object WidgetGrids {
     private fun widgetBoundsOf(
         item: CompositionItem,
         state: ItemState,
-        faceOf: (Int) -> ClockFace?
+        faceOf: (Int) -> ClockFace?,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): ItemBounds? {
         val placement = item.placement(state) ?: return null
         val face = faceOf(item.style) ?: return null
         val root = face.large as? StackNode
-        val w = root?.width ?: if (zoneOf(face) == WidgetZone.INLINE_1X2) 0.36f else FaceGrid.width(spanOf(face))
+        val w = if (zoneOf(face) == WidgetZone.INLINE_1X2) {
+            estimateInlineWidth(item, faceOf, measuredInlineWidths)
+        } else {
+            root?.width ?: FaceGrid.width(spanOf(face))
+        }
         val h = heightOf(face)
         return ItemBounds.of(placement, w, h)
     }
@@ -371,11 +601,11 @@ object WidgetGrids {
         itemState: ItemState,
         faceOf: (Int) -> ClockFace?,
         clockBounds: ItemBounds?,
-        maxY: Float = DEFAULT_BOTTOM
+        maxY: Float = DEFAULT_BOTTOM,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): Composition {
-        val large = itemState == ItemState.LARGE || itemState == ItemState.AOD_LARGE
-        val scale = 1f
         val zoneGap = GRID_GAP
+        val gap = FaceGrid.GAP
         val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
         val clock = clockBounds ?: ItemBounds(0.05f, 0.2f, 0.95f, 0.6f)
 
@@ -384,9 +614,14 @@ object WidgetGrids {
         val inline = inlineItems(composition, faceOf)
         if (grid.isEmpty() && inline.isEmpty()) return result.copy(widgetsAbove = widgetsAbove)
 
-        val cellW = FaceGrid.CELL
-        val rowHGrid = if (grid.isNotEmpty()) grid.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(cellW) else 0f
-        val rowHInline = if (inline.isNotEmpty()) inline.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(INLINE_HEIGHT) else 0f
+        val gridRows = packGridRows(grid, composition.gridCols, faceOf)
+        val inlineRows = packInlineRows(inline, faceOf, measuredInlineWidths)
+        val rowHGrid = if (gridRows.isEmpty()) 0f else {
+            gridRows.sumOf { it.height.toDouble() }.toFloat() + gap * (gridRows.size - 1).coerceAtLeast(0)
+        }
+        val rowHInline = if (inlineRows.isEmpty()) 0f else {
+            inlineRows.sumOf { it.height.toDouble() }.toFloat() + gap * (inlineRows.size - 1).coerceAtLeast(0)
+        }
         val totalH = rowHGrid + rowHInline + (if (grid.isNotEmpty() && inline.isNotEmpty()) zoneGap else 0f)
 
         var clockShiftY = 0f
@@ -423,7 +658,8 @@ object WidgetGrids {
             maxY = maxY,
             centerHorizontally = true,
             clockBounds = shiftedClock,
-            widgetsAbove = widgetsAbove
+            widgetsAbove = widgetsAbove,
+            measuredInlineWidths = measuredInlineWidths
         )
         result = layoutZone(
             composition = result,
@@ -434,7 +670,8 @@ object WidgetGrids {
             maxY = maxY,
             centerHorizontally = true,
             clockBounds = shiftedClock,
-            widgetsAbove = widgetsAbove
+            widgetsAbove = widgetsAbove,
+            measuredInlineWidths = measuredInlineWidths
         )
         return result.copy(widgetsAbove = widgetsAbove, gridDocked = true, inlineDocked = true)
     }
@@ -965,8 +1202,14 @@ object WidgetGrids {
                 }
 
                 nextGridDocked = if (clockCur != null && overlaps(paddedCandidateGrid, clockCur)) {
-                    if (!gridDocked) attachedEvent = true
-                    true
+                    if (nextGridDocked) {
+                        true
+                    } else if (shouldAttach(gridCur, candidateGrid, clockCur)) {
+                        attachedEvent = true
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
@@ -978,9 +1221,19 @@ object WidgetGrids {
 
                 val touchesGrid = gridCur != null && overlaps(paddedCandidateInline, gridCur)
                 val touchesClock = clockCur != null && overlaps(paddedCandidateInline, clockCur)
-                nextInlineDocked = touchesGrid || touchesClock
-                if (nextInlineDocked && !inlineDocked) {
-                    attachedEvent = true
+                nextInlineDocked = if (touchesGrid || touchesClock) {
+                    if (nextInlineDocked) {
+                        true
+                    } else if ((touchesGrid && shouldAttach(inlineCur, candidateInline, gridCur)) ||
+                        (touchesClock && shouldAttach(inlineCur, candidateInline, clockCur))
+                    ) {
+                        attachedEvent = true
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
                 }
             }
 
@@ -1745,28 +1998,27 @@ object WidgetGrids {
         composition: Composition,
         itemState: ItemState,
         faceOf: (Int) -> ClockFace?,
-        large: Boolean,
         zoneGap: Float
     ): Pair<Float, Float>? {
         val grid = gridItems(composition, faceOf)
         if (grid.isEmpty()) return null
-        val y = grid.firstNotNullOfOrNull { it.placement(itemState)?.y } ?: return null
-        val h = grid.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(FaceGrid.CELL)
-        return (y - zoneGap) to (y + h + zoneGap)
+        val boxes = grid.mapNotNull { widgetBoundsOf(it, itemState, faceOf) }
+        if (boxes.isEmpty()) return null
+        return (boxes.minOf { it.top } - zoneGap) to (boxes.maxOf { it.bottom } + zoneGap)
     }
 
     private fun inlineVerticalSpan(
         composition: Composition,
         itemState: ItemState,
         faceOf: (Int) -> ClockFace?,
-        large: Boolean,
-        zoneGap: Float
+        zoneGap: Float,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): Pair<Float, Float>? {
         val inline = inlineItems(composition, faceOf)
         if (inline.isEmpty()) return null
-        val y = inline.firstNotNullOfOrNull { it.placement(itemState)?.y } ?: return null
-        val h = inline.maxOf { heightOf(faceOf(it.style)) }.coerceAtLeast(INLINE_HEIGHT)
-        return (y - zoneGap) to (y + h + zoneGap)
+        val boxes = inline.mapNotNull { widgetBoundsOf(it, itemState, faceOf, measuredInlineWidths) }
+        if (boxes.isEmpty()) return null
+        return (boxes.minOf { it.top } - zoneGap) to (boxes.maxOf { it.bottom } + zoneGap)
     }
 
     private fun applyZonePlacements(
@@ -1787,44 +2039,31 @@ object WidgetGrids {
 
     private fun currentGridCenter(
         items: List<CompositionItem>,
-        widths: List<Float>,
-        state: ItemState
+        state: ItemState,
+        faceOf: (Int) -> ClockFace?
     ): FacePlacement? {
-        val placed = items.zip(widths).mapNotNull { (item, w) ->
-            item.placement(state)?.let { Triple(item, w, it) }
-        }
-        val (_, firstWidth, firstPlacement) = placed.firstOrNull() ?: return null
-        if (placed.size == 1) {
-            val centerX = when (firstPlacement.anchor) {
-                FaceAlign.START -> firstPlacement.x + firstWidth / 2f
-                FaceAlign.CENTER -> firstPlacement.x
-                FaceAlign.END -> firstPlacement.x - firstWidth / 2f
-            }
-            return FacePlacement(centerX, firstPlacement.y, FaceAlign.CENTER)
-        }
-        val firstLeft = when (firstPlacement.anchor) {
-            FaceAlign.START -> firstPlacement.x
-            FaceAlign.CENTER -> firstPlacement.x - firstWidth / 2f
-            FaceAlign.END -> firstPlacement.x - firstWidth
-        }
-        val (_, lastWidth, lastPlacement) = placed.last()
-        val lastRight = when (lastPlacement.anchor) {
-            FaceAlign.START -> lastPlacement.x + lastWidth
-            FaceAlign.CENTER -> lastPlacement.x + lastWidth / 2f
-            FaceAlign.END -> lastPlacement.x
-        }
-        return FacePlacement((firstLeft + lastRight) / 2f, firstPlacement.y, FaceAlign.CENTER)
+        val boxes = items.mapNotNull { widgetBoundsOf(it, state, faceOf) }
+        if (boxes.isEmpty()) return null
+        return FacePlacement(
+            x = (boxes.minOf { it.left } + boxes.maxOf { it.right }) / 2f,
+            y = boxes.minOf { it.top },
+            anchor = FaceAlign.CENTER
+        )
     }
 
     private fun currentInlineCenter(
         items: List<CompositionItem>,
-        state: ItemState
+        state: ItemState,
+        faceOf: (Int) -> ClockFace?,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
     ): FacePlacement? {
-        val placed = items.mapNotNull { it.placement(state) }
-        val first = placed.firstOrNull() ?: return null
-        if (placed.size == 1) return first
-        val second = placed[1]
-        return FacePlacement((first.x + second.x) / 2f, first.y, FaceAlign.CENTER)
+        val boxes = items.mapNotNull { widgetBoundsOf(it, state, faceOf, measuredInlineWidths) }
+        if (boxes.isEmpty()) return null
+        return FacePlacement(
+            x = (boxes.minOf { it.left } + boxes.maxOf { it.right }) / 2f,
+            y = boxes.minOf { it.top },
+            anchor = FaceAlign.CENTER
+        )
     }
 
     private fun clampCenterX(centerX: Float, rowWidth: Float): Float {

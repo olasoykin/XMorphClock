@@ -5,8 +5,14 @@ data class Composition(
     val nextId: Int = 1,
     val gridDocked: Boolean = true,
     val inlineDocked: Boolean = true,
-    val widgetsAbove: Boolean = false
+    val widgetsAbove: Boolean = false,
+    val gridCols: Int = FaceGrid.ROW_CELLS,
+    val gridRows: Int = 1,
+    val inlineRows: Int = 1
 ) {
+    val gridCapacity: Int
+        get() = gridCols.coerceIn(1, FaceGrid.ROW_CELLS) * gridRows.coerceAtLeast(1)
+
     fun withDocked(grid: Boolean? = null, inline: Boolean? = null, above: Boolean? = null): Composition =
         copy(
             gridDocked = grid ?: gridDocked,

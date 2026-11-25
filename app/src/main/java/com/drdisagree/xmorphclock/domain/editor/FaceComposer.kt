@@ -33,7 +33,12 @@ object FaceComposer {
         fun tree(state: ItemState, pick: (ClockFace, Boolean) -> FaceNode, place: (CompositionItem, FaceNode) -> FacePlacement): FaceNode = StackNode(
             children = entries.map { (item, face) ->
                 val effectiveScale = if (item.clock) item.scale(state) else item.largeScale
-                val node = FaceEditor.scaleNode(pick(face, item.clock), effectiveScale)
+                val scaled = FaceEditor.scaleNode(pick(face, item.clock), effectiveScale)
+                val node = if (item.clock) {
+                    FaceEditor.stretchNode(scaled, face.layers, item.widthStretch(state), item.heightStretch(state))
+                } else {
+                    scaled
+                }
                 val placement = place(item, node)
                 placed(rename(item, node), if (item.visible(state)) placement else placement.copy(hidden = true))
             }
@@ -62,16 +67,34 @@ object FaceComposer {
             val scale = if (item.clock) item.scale(state) else item.largeScale
             return node?.let { FaceEditor.scaleNode(it, 1f / scale) }
         }
+        val clockLayers = face.layers.filter { isClockLayer(it.id) }
+        fun restoreClockNode(actual: FaceNode?, original: FaceNode, item: CompositionItem, state: ItemState): FaceNode? {
+            actual ?: return null
+            val scale = item.scale(state)
+            val wStretch = item.widthStretch(state)
+            val hStretch = item.heightStretch(state)
+            val expected = FaceEditor.stretchNode(
+                FaceEditor.scaleNode(original, scale),
+                parts.clock.layers,
+                wStretch,
+                hStretch
+            )
+            if (placed(expected, FacePlacement()) == placed(actual, FacePlacement())) {
+                return placed(original, original.placement)
+            }
+            val unstretched = FaceEditor.stretchNode(actual, clockLayers, 1f / wStretch, 1f / hStretch)
+            return placed(FaceEditor.scaleNode(unstretched, 1f / scale), original.placement)
+        }
         val clock = clockItem?.let { item ->
-            val largeChild = unscaled(child(large, item), item, ItemState.LARGE)
-            val smallChild = unscaled(child(small, item), item, ItemState.SMALL)
+            val largeChild = restoreClockNode(child(large, item), parts.clock.large, item, ItemState.LARGE)
+            val smallChild = restoreClockNode(child(small, item), parts.clock.small, item, ItemState.SMALL)
             if (largeChild == null && smallChild == null) return@let null
             face.copy(
-                layers = face.layers.filter { isClockLayer(it.id) },
-                large = largeChild?.let { placed(it, parts.clock.large.placement) } ?: parts.clock.large,
-                small = smallChild?.let { placed(it, parts.clock.small.placement) } ?: parts.clock.small,
-                aodLarge = parts.clock.aodLarge?.let { own -> unscaled(child(face.aodLarge, item), item, ItemState.AOD_LARGE)?.let { placed(it, own.placement) } ?: own },
-                aodSmall = parts.clock.aodSmall?.let { own -> unscaled(child(face.aodSmall, item), item, ItemState.AOD_SMALL)?.let { placed(it, own.placement) } ?: own }
+                layers = clockLayers,
+                large = largeChild ?: parts.clock.large,
+                small = smallChild ?: parts.clock.small,
+                aodLarge = parts.clock.aodLarge?.let { own -> restoreClockNode(child(face.aodLarge, item), own, item, ItemState.AOD_LARGE) ?: own },
+                aodSmall = parts.clock.aodSmall?.let { own -> restoreClockNode(child(face.aodSmall, item), own, item, ItemState.AOD_SMALL) ?: own }
             )
         } ?: parts.clock
         val widgets = parts.widgets.toMutableMap()

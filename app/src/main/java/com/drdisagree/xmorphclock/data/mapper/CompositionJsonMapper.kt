@@ -3,6 +3,7 @@ package com.drdisagree.xmorphclock.data.mapper
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.FaceAlign
+import com.drdisagree.xmorphclock.domain.model.FaceGrid
 import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import org.json.JSONArray
@@ -15,6 +16,11 @@ object CompositionJsonMapper {
         .put("gridDocked", composition.gridDocked)
         .put("inlineDocked", composition.inlineDocked)
         .put("widgetsAbove", composition.widgetsAbove)
+        .apply {
+            if (composition.gridCols != FaceGrid.ROW_CELLS) put("gridCols", composition.gridCols)
+            if (composition.gridRows != 1) put("gridRows", composition.gridRows)
+            if (composition.inlineRows != 1) put("inlineRows", composition.inlineRows)
+        }
         .put("items", JSONArray().apply {
             composition.items.forEach { item ->
                 put(
@@ -30,6 +36,10 @@ object CompositionJsonMapper {
                             if (item.hidden.isNotEmpty()) put("hidden", JSONArray().apply { item.hidden.forEach { put(it.name) } })
                             if (item.largeScale != 1f) put("largeScale", item.largeScale.toDouble())
                             if (item.smallScale != 1f) put("smallScale", item.smallScale.toDouble())
+                            if (item.largeWidthStretch != 1f) put("largeWidthStretch", item.largeWidthStretch.toDouble())
+                            if (item.largeHeightStretch != 1f) put("largeHeightStretch", item.largeHeightStretch.toDouble())
+                            if (item.smallWidthStretch != 1f) put("smallWidthStretch", item.smallWidthStretch.toDouble())
+                            if (item.smallHeightStretch != 1f) put("smallHeightStretch", item.smallHeightStretch.toDouble())
                         }
                 )
             }
@@ -53,6 +63,10 @@ object CompositionJsonMapper {
                     aodSmall = item.optJSONObject("aodSmall")?.let(::placementOf),
                     largeScale = item.optDouble("largeScale", 1.0).toFloat(),
                     smallScale = item.optDouble("smallScale", 1.0).toFloat(),
+                    largeWidthStretch = item.optDouble("largeWidthStretch", 1.0).toFloat(),
+                    largeHeightStretch = item.optDouble("largeHeightStretch", 1.0).toFloat(),
+                    smallWidthStretch = item.optDouble("smallWidthStretch", 1.0).toFloat(),
+                    smallHeightStretch = item.optDouble("smallHeightStretch", 1.0).toFloat(),
                     hidden = item.optJSONArray("hidden")?.let { list ->
                         List(list.length()) { list.optString(it) }.mapNotNullTo(HashSet()) { name -> ItemState.entries.firstOrNull { it.name == name } }
                     }.orEmpty()
@@ -63,7 +77,10 @@ object CompositionJsonMapper {
                 nextId = root.optInt("nextId", (items.maxOfOrNull { it.id } ?: 0) + 1),
                 gridDocked = root.optBoolean("gridDocked", true),
                 inlineDocked = root.optBoolean("inlineDocked", true),
-                widgetsAbove = root.optBoolean("widgetsAbove", false)
+                widgetsAbove = root.optBoolean("widgetsAbove", false),
+                gridCols = root.optInt("gridCols", FaceGrid.ROW_CELLS).coerceIn(1, FaceGrid.ROW_CELLS),
+                gridRows = root.optInt("gridRows", 1).coerceAtLeast(1),
+                inlineRows = root.optInt("inlineRows", 1).coerceAtLeast(1)
             )
         } catch (_: Exception) {
             Composition()
