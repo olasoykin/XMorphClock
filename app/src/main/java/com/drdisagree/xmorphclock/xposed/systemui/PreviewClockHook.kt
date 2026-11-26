@@ -14,7 +14,6 @@ import com.drdisagree.xmorphclock.xposed.clock.SlotWidth
 import com.drdisagree.xmorphclock.xposed.hook.HookEnv
 import com.drdisagree.xmorphclock.xposed.hook.callMethod
 import com.drdisagree.xmorphclock.xposed.hook.fieldValue
-import com.drdisagree.xmorphclock.xposed.hook.findMethod
 import com.drdisagree.xmorphclock.xposed.hook.hookAfter
 import com.drdisagree.xmorphclock.xposed.hook.onEachPreDrawGate
 import com.drdisagree.xmorphclock.xposed.hook.setFieldValue
@@ -22,6 +21,7 @@ import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 import com.drdisagree.xmorphclock.xposed.preview.PreviewClockSlot
 import com.drdisagree.xmorphclock.xposed.report.HookReporter
 import java.lang.ref.WeakReference
+import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -39,7 +39,6 @@ object PreviewClockHook {
     private const val SMALL_CLOCK_ID = "lockscreen_clock_view"
     private const val SMARTSPACE_ID = "bc_smartspace_view"
     private const val ID_TYPE = "id"
-    private const val TOP_FRACTION = 0.14f
     private const val CANCEL_GAP_MS = 500L
 
     private val RENDERER_METHOD_KEYWORDS = listOf(
@@ -48,7 +47,9 @@ object PreviewClockHook {
         "clock",
         "preview",
         "root",
-        "bind"
+        "bind",
+        "update",
+        "init"
     )
 
     private val PREVIEW_STACK_HINTS = listOf(
@@ -73,50 +74,21 @@ object PreviewClockHook {
         SMARTSPACE_ID
     )
 
-    private val EXTRA_IDS = listOf(
-        "clock_view",
-        "clock_host_view",
-        "small_clock_container",
-        "large_clock_container",
-        "date_smartspace_view",
-        "date_smartspace_view_large",
-        "weather_smartspace_view",
-        "weather_smartspace_view_large",
-        SMARTSPACE_ID,
-        "keyguard_slice_view"
-    )
-
-    private val EXTRA_CLASS_PREFIXES = listOf(
-        "com.android.keyguard.AnimatableClockView",
-        "com.android.systemui.clocks.",
-        "com.google.android.systemui.clocks.",
-        "com.android.systemui.shared.clocks.",
-        "com.android.systemui.customization.clocks.",
-        "com.android.systemui.plugins.clocks.",
-        "com.google.android.systemui.smartspace.DateSmartspaceView",
-        "com.google.android.systemui.smartspace.WeatherSmartspaceView",
-        "com.android.keyguard.KeyguardSliceView"
-    )
-
-    private data class HiddenState(
-        val visibility: Int,
-        val alpha: Float
-    )
-
-    private class RootState(
+    private class TopRootState(
         var viewModel: WeakReference<Any>? = null,
+        var renderer: WeakReference<Any>? = null,
+        val dualHosts: MutableSet<ViewGroup> = Collections.newSetFromMap(WeakHashMap()),
         var lastIsLarge: Boolean = true,
         var cachedTopOffset: Int = 0,
         var lastCancelMs: Long = 0L,
-        var delegated: Boolean = false
+        var promoted: Boolean = false
     )
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val hookedHosts = WeakHashMap<ViewGroup, LongArray>()
-    private val hookedRoots = WeakHashMap<ViewGroup, RootState>()
-    private val watchedContainers = WeakHashMap<ViewGroup, Boolean>()
-    private val hiddenViews = WeakHashMap<View, HiddenState>()
+    private val watchedRoots = WeakHashMap<ViewGroup, TopRootState>()
     private var latestViewModel: WeakReference<Any>? = null
+    private var latestRenderer: WeakReference<Any>? = null
     private var lastErrorLogMs = 0L
 
     private val totalRoots = AtomicInteger(0)
@@ -176,16 +148,15 @@ object PreviewClockHook {
                     val arg0 = args.getOrNull(0) as? ViewGroup
                     val arg1 = args.getOrNull(1) as? ViewGroup
                     if (arg0 != null && arg1 != null && arg0 !== arg1) {
-                        enforceHost(arg0, isLarge = true)
-                        enforceHost(arg1, isLarge = false)
+                        enforceDualHosts(arg0, arg1, viewModel, latestRenderer?.get())
                         HookReporter.count("previewBinderHost")
                         return@hookAfter
                     }
 
-                    // Case 2 (A14 QPR2 - A17): bind(context, rootView: ConstraintLayout, viewModel, ...)
+                    // Case 2 (A14 QPR2 - A17): bind(context, rootView, viewModel, ...)
                     args.filterIsInstance<ViewGroup>().forEach { root ->
                         HookReporter.count("previewBinderRoot")
-                        inspectAndHookRoot(root, viewModel)
+                        watchTree(root, viewModel = viewModel, renderer = latestRenderer?.get())
                     }
                 }.onFailure { logThrottled("PreviewClock binder hook failed", it) }
             }
@@ -202,10 +173,12 @@ object PreviewClockHook {
                     val args = chain.args
                     val vm = args.firstOrNull {
                         it != null && it.javaClass.name.contains(VIEW_MODEL_FRAGMENT)
-                    } ?: findNestedClockVm(args) ?: latestViewModel?.get()
+                    }?.also { latestViewModel = WeakReference(it) }
+                        ?: findNestedClockVm(args)?.also { latestViewModel = WeakReference(it) }
+                        ?: latestViewModel?.get()
                     args.filterIsInstance<ViewGroup>().forEach { root ->
                         HookReporter.count("previewViewBinderRoot")
-                        inspectAndHookRoot(root, vm)
+                        watchTree(root, viewModel = vm, renderer = latestRenderer?.get())
                     }
                 }.onFailure { logThrottled("PreviewClock viewBinder hook failed", it) }
             }
@@ -235,10 +208,11 @@ object PreviewClockHook {
                     runCatching {
                         HookReporter.count("previewRenderer_${method.name}")
                         val vm = latestViewModel?.get()
+                        val renderer = chain.thisObject?.also { latestRenderer = WeakReference(it) }
                         chain.args.filterIsInstance<ViewGroup>().forEach { root ->
-                            inspectAndHookRoot(root, viewModel = vm)
+                            watchTree(root, viewModel = vm, renderer = renderer)
                         }
-                        chain.thisObject?.let { renderer ->
+                        if (renderer != null) {
                             scanRendererFields(renderer)
                             mainHandler.post { runCatching { scanRendererFields(renderer) } }
                         }
@@ -252,6 +226,7 @@ object PreviewClockHook {
                 runCatching {
                     HookReporter.count("previewRendererInit")
                     chain.thisObject?.let { renderer ->
+                        latestRenderer = WeakReference(renderer)
                         scanRendererFields(renderer)
                         mainHandler.post { runCatching { scanRendererFields(renderer) } }
                         mainHandler.postDelayed({ runCatching { scanRendererFields(renderer) } }, 150L)
@@ -274,9 +249,12 @@ object PreviewClockHook {
                     if (!isKeyguardPreviewContext(root)) return@hookAfter
                     totalSetViews.incrementAndGet()
                     HookReporter.count("previewSurfaceSetView")
-                    val vm = latestViewModel?.get()
-                    inspectAndHookRoot(root, vm)
-                    mainHandler.post { runCatching { inspectAndHookRoot(root, latestViewModel?.get()) } }
+                    watchTree(root, viewModel = latestViewModel?.get(), renderer = latestRenderer?.get())
+                    mainHandler.post {
+                        runCatching {
+                            watchTree(root, viewModel = latestViewModel?.get(), renderer = latestRenderer?.get())
+                        }
+                    }
                 }.onFailure { logThrottled("PreviewClock SurfaceControlViewHost hook failed", it) }
             }
         }
@@ -315,14 +293,16 @@ object PreviewClockHook {
     }
 
     private fun scanRendererFields(renderer: Any) {
+        latestRenderer = WeakReference(renderer)
         val viewModel = findViewModelOnRenderer(renderer)?.also {
             latestViewModel = WeakReference(it)
         } ?: latestViewModel?.get()
 
         val largeHost = renderer.fieldValue("largeClockHostView") as? ViewGroup
         val smallHost = renderer.fieldValue("smallClockHostView") as? ViewGroup
-        if (largeHost != null) enforceHost(largeHost, isLarge = true)
-        if (smallHost != null) enforceHost(smallHost, isLarge = false)
+        if (largeHost != null && smallHost != null && largeHost !== smallHost) {
+            enforceDualHosts(largeHost, smallHost, viewModel, renderer)
+        }
 
         var cls: Class<*>? = renderer.javaClass
         while (cls != null && cls != Any::class.java) {
@@ -332,13 +312,13 @@ object PreviewClockHook {
                 when (value) {
                     is ViewGroup -> {
                         if (value !== largeHost && value !== smallHost) {
-                            inspectAndHookRoot(value, viewModel)
+                            watchTree(value, viewModel = viewModel, renderer = renderer)
                         }
                     }
                     is SurfaceControlViewHost -> {
                         val hostView = value.view as? ViewGroup
                         if (hostView != null) {
-                            inspectAndHookRoot(hostView, viewModel)
+                            watchTree(hostView, viewModel = viewModel, renderer = renderer)
                         }
                     }
                 }
@@ -361,71 +341,160 @@ object PreviewClockHook {
         return null
     }
 
-    @SuppressLint("DiscouragedApi")
-    private fun inspectAndHookRoot(root: ViewGroup, viewModel: Any?) {
-        if (isConstraintLayout(root)) {
-            enforceConstraintRoot(root, viewModel)
-            return
-        }
-
-        val nestedConstraint = findDescendantConstraintRoot(root)
-        if (nestedConstraint != null) {
-            enforceConstraintRoot(nestedConstraint, viewModel)
-            return
-        }
-
-        val largeId = resolveResourceId(root, LARGE_CLOCK_ID)
-        val smallId = resolveResourceId(root, SMALL_CLOCK_ID)
-        val largeView = if (largeId != 0) root.findViewById<View>(largeId) else null
-        val smallView = if (smallId != 0) root.findViewById<View>(smallId) else null
-
-        if (largeView is ViewGroup && smallView is ViewGroup && largeView !== smallView) {
-            enforceHost(largeView, isLarge = true)
-            enforceHost(smallView, isLarge = false)
-            return
-        }
-
-        // Wait if root is still an empty wrapper FrameLayout before KeyguardRootView is inflated/added
-        if (root.childCount == 0) {
-            watchEmptyWrapper(root, viewModel)
-            return
-        }
-
-        enforceConstraintRoot(root, viewModel)
+    private fun enforceDualHosts(
+        largeHost: ViewGroup,
+        smallHost: ViewGroup,
+        viewModel: Any?,
+        renderer: Any?
+    ) {
+        val topRoot = resolveTopRoot(largeHost)
+        val state = ensureRootWatched(topRoot, viewModel, renderer)
+        state.dualHosts += largeHost
+        state.dualHosts += smallHost
+        enforceHost(largeHost, isLarge = true)
+        enforceHost(smallHost, isLarge = false)
     }
 
-    private fun watchEmptyWrapper(container: ViewGroup, viewModel: Any?) {
-        if (watchedContainers.containsKey(container)) return
-        watchedContainers[container] = true
-        val containerRef = WeakReference(container)
-        val vmRef = viewModel?.let(::WeakReference)
-        container.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
-            override fun onChildViewAdded(parent: View?, child: View?) {
-                val target = containerRef.get() ?: return
-                if (child is PreviewClockSlot) return
-                mainHandler.post {
-                    runCatching {
-                        val vm = vmRef?.get() ?: latestViewModel?.get()
-                        inspectAndHookRoot(target, vm)
+    private fun watchTree(candidate: ViewGroup, viewModel: Any?, renderer: Any?) {
+        val topRoot = resolveTopRoot(candidate)
+        ensureRootWatched(topRoot, viewModel, renderer)
+    }
+
+    private fun resolveTopRoot(view: ViewGroup): ViewGroup = (view.rootView as? ViewGroup) ?: view
+
+    private fun ensureRootWatched(topRoot: ViewGroup, viewModel: Any?, renderer: Any?): TopRootState {
+        val existing = watchedRoots[topRoot]
+        if (existing != null) {
+            if (viewModel != null) existing.viewModel = WeakReference(viewModel)
+            if (renderer != null) existing.renderer = WeakReference(renderer)
+            return existing
+        }
+        val state = TopRootState(
+            viewModel = (viewModel ?: latestViewModel?.get())?.let(::WeakReference),
+            renderer = (renderer ?: latestRenderer?.get())?.let(::WeakReference)
+        )
+        watchedRoots[topRoot] = state
+        totalRoots.incrementAndGet()
+        HookReporter.count("previewRootHooked")
+
+        topRoot.onEachPreDrawGate {
+            if (state.promoted) return@onEachPreDrawGate true
+            val actualTop = resolveTopRoot(topRoot)
+            if (actualTop !== topRoot) {
+                promoteToParentTopRoot(topRoot, actualTop, state)
+                return@onEachPreDrawGate true
+            }
+            val changed = try {
+                syncTopRoot(topRoot, state)
+            } catch (throwable: Throwable) {
+                logThrottled("PreviewClock syncTopRoot failed", throwable)
+                false
+            }
+            val now = SystemClock.uptimeMillis()
+            if (changed && now - state.lastCancelMs > CANCEL_GAP_MS) {
+                state.lastCancelMs = now
+                false
+            } else {
+                true
+            }
+        }
+        return state
+    }
+
+    private fun promoteToParentTopRoot(oldRoot: ViewGroup, actualTop: ViewGroup, oldState: TopRootState) {
+        oldState.promoted = true
+        findSlot(oldRoot)?.let { slot -> oldRoot.removeView(slot) }
+        val targetState = ensureRootWatched(actualTop, oldState.viewModel?.get(), oldState.renderer?.get())
+        targetState.dualHosts.addAll(oldState.dualHosts)
+        if (targetState.cachedTopOffset == 0 && oldState.cachedTopOffset > 0) {
+            targetState.cachedTopOffset = oldState.cachedTopOffset
+        }
+        targetState.lastIsLarge = oldState.lastIsLarge
+    }
+
+    private fun syncTopRoot(topRoot: ViewGroup, state: TopRootState): Boolean {
+        val vm = state.viewModel?.get() ?: latestViewModel?.get()
+        val renderer = state.renderer?.get() ?: latestRenderer?.get()
+        val protectedAncestors = PreviewTargetScanner.collectProtectedAncestors(topRoot)
+        val scan = PreviewTargetScanner.scan(topRoot, vm, renderer, protectedAncestors)
+
+        val vmSize = PreviewTargetScanner.readClockSize(vm)
+        state.lastIsLarge = vmSize ?: PreviewTargetScanner.inferIsLarge(topRoot, scan, state.lastIsLarge)
+
+        val enabled = ModulePrefs.isClockEnabled && ModulePrefs.isWallpaperPreviewEnabled
+        val activeDualHosts = state.dualHosts.count { it.isAttachedToWindow } >= 2
+        val existingSlot = findSlot(topRoot)
+        var changed = false
+
+        if (enabled) {
+            scan.allTargets.forEach { target ->
+                if (PreviewTargetScanner.hideStockView(target)) changed = true
+            }
+
+            if (activeDualHosts) {
+                if (existingSlot != null) {
+                    topRoot.removeView(existingSlot)
+                    changed = true
+                }
+                return changed
+            }
+
+            val resolvedTop = PreviewTargetScanner.resolveTopOffset(topRoot, state.lastIsLarge, scan)
+            if (resolvedTop > 0) {
+                state.cachedTopOffset = resolvedTop
+            }
+
+            if (existingSlot == null) {
+                val created = PreviewClockSlot(topRoot.context, initialLarge = state.lastIsLarge).apply {
+                    id = View.generateViewId()
+                }
+                val params = createOverlayLayoutParams(topRoot, state.cachedTopOffset)
+                topRoot.addView(created, params)
+                totalSlots.incrementAndGet()
+                HookReporter.count("previewSlotAdded")
+                changed = true
+            } else {
+                existingSlot.setLarge(state.lastIsLarge)
+                if (!existingSlot.isVisible) {
+                    existingSlot.isVisible = true
+                    changed = true
+                }
+                if (existingSlot.alpha != 1f) {
+                    existingSlot.alpha = 1f
+                    changed = true
+                }
+                val lp = existingSlot.layoutParams as? ViewGroup.MarginLayoutParams
+                var lpUpdated = false
+                if (lp != null) {
+                    if (state.cachedTopOffset > 0 && lp.topMargin != state.cachedTopOffset) {
+                        lp.topMargin = state.cachedTopOffset
+                        lpUpdated = true
+                    }
+                    val targetWidth = if (topRoot.width > 0) topRoot.width else lp.width
+                    if (targetWidth > 0 && lp.width != targetWidth) {
+                        lp.width = targetWidth
+                        lpUpdated = true
+                    }
+                    if (lpUpdated) {
+                        existingSlot.layoutParams = lp
+                        changed = true
                     }
                 }
+                if (topRoot.getChildAt(topRoot.childCount - 1) !== existingSlot) {
+                    existingSlot.bringToFront()
+                    changed = true
+                }
             }
-
-            override fun onChildViewRemoved(parent: View?, child: View?) = Unit
-        })
-    }
-
-    private fun findDescendantConstraintRoot(group: ViewGroup): ViewGroup? {
-        for (i in 0 until group.childCount) {
-            val child = group.getChildAt(i)
-            if (child is PreviewClockSlot) continue
-            if (child is ViewGroup) {
-                if (isConstraintLayout(child)) return child
-                val found = findDescendantConstraintRoot(child)
-                if (found != null) return found
+        } else {
+            scan.allTargets.forEach { target ->
+                if (PreviewTargetScanner.restoreStockView(target)) changed = true
+            }
+            if (existingSlot != null && existingSlot.isVisible) {
+                existingSlot.isVisible = false
+                changed = true
             }
         }
-        return null
+        return changed
     }
 
     private fun enforceHost(host: ViewGroup, isLarge: Boolean) {
@@ -460,7 +529,7 @@ object PreviewClockHook {
             for (i in 0 until host.childCount) {
                 val child = host.getChildAt(i)
                 if (child is PreviewClockSlot) continue
-                if (hideStockView(child)) changed = true
+                if (PreviewTargetScanner.hideStockView(child)) changed = true
             }
             val desiredWidth = resolveSlotWidth(host)
             if (existingSlot == null) {
@@ -498,7 +567,7 @@ object PreviewClockHook {
                         child.isVisible = false
                         changed = true
                     }
-                } else if (restoreStockView(child)) {
+                } else if (PreviewTargetScanner.restoreStockView(child)) {
                     changed = true
                 }
             }
@@ -516,267 +585,6 @@ object PreviewClockHook {
         return ViewGroup.LayoutParams.MATCH_PARENT
     }
 
-    private fun enforceConstraintRoot(root: ViewGroup, viewModel: Any?) {
-        val existing = hookedRoots[root]
-        if (existing != null) {
-            if (viewModel != null) existing.viewModel = WeakReference(viewModel)
-            return
-        }
-        val state = RootState(viewModel = (viewModel ?: latestViewModel?.get())?.let(::WeakReference))
-        hookedRoots[root] = state
-        totalRoots.incrementAndGet()
-        HookReporter.count("previewRootHooked")
-
-        root.onEachPreDrawGate {
-            if (state.delegated) return@onEachPreDrawGate true
-            val changed = try {
-                syncConstraintRoot(root, state)
-            } catch (throwable: Throwable) {
-                logThrottled("PreviewClock syncConstraintRoot failed", throwable)
-                false
-            }
-            val now = SystemClock.uptimeMillis()
-            if (changed && now - state.lastCancelMs > CANCEL_GAP_MS) {
-                state.lastCancelMs = now
-                false
-            } else {
-                true
-            }
-        }
-    }
-
-    private fun syncConstraintRoot(root: ViewGroup, state: RootState): Boolean {
-        // If root is a wrapper FrameLayout and a ConstraintLayout (KeyguardRootView) appeared inside later, delegate to it
-        if (!isConstraintLayout(root)) {
-            val nested = findDescendantConstraintRoot(root)
-            if (nested != null) {
-                state.delegated = true
-                findSlot(root)?.let { slot -> root.removeView(slot) }
-                enforceConstraintRoot(nested, state.viewModel?.get())
-                return true
-            }
-        }
-
-        val largeId = resolveResourceId(root, LARGE_CLOCK_ID)
-        val smallId = resolveResourceId(root, SMALL_CLOCK_ID)
-        val extraIds = EXTRA_IDS.mapNotNull { name ->
-            resolveResourceId(root, name).takeIf { it != 0 }
-        }.toSet()
-
-        val vm = state.viewModel?.get() ?: latestViewModel?.get()
-        val largeClockViews = HashSet<View>()
-        val smallClockViews = HashSet<View>()
-        val extraViews = HashSet<View>()
-
-        var sizeKnownFromVm = false
-        if (vm != null) {
-            val selectedSize = readFlowValue(vm, "selectedClockSize")
-            if (selectedSize != null) {
-                val label = selectedSize.toString()
-                when {
-                    label.contains("SMALL", ignoreCase = true) -> {
-                        state.lastIsLarge = false
-                        sizeKnownFromVm = true
-                    }
-                    label.contains("LARGE", ignoreCase = true) -> {
-                        state.lastIsLarge = true
-                        sizeKnownFromVm = true
-                    }
-                }
-            } else {
-                val largeFlow = readFlowValue(vm, "isLargeClockVisible") as? Boolean
-                val smallFlow = readFlowValue(vm, "isSmallClockVisible") as? Boolean
-                if (largeFlow == true && smallFlow != true) {
-                    state.lastIsLarge = true
-                    sizeKnownFromVm = true
-                } else if (smallFlow == true && largeFlow != true) {
-                    state.lastIsLarge = false
-                    sizeKnownFromVm = true
-                }
-            }
-
-            val controller = readFlowValue(vm, "previewClock") ?: readFlowValue(vm, "currentClock")
-            if (controller != null) {
-                collectClockViews(controller.callMethod("getLargeClock"), largeClockViews)
-                collectClockViews(controller.callMethod("getSmallClock"), smallClockViews)
-            }
-        }
-
-        collectDescendantTargets(
-            group = root,
-            largeId = largeId,
-            smallId = smallId,
-            extraIds = extraIds,
-            largeOut = largeClockViews,
-            smallOut = smallClockViews,
-            extraOut = extraViews
-        )
-
-        if (!sizeKnownFromVm) {
-            val largeVisible = largeClockViews.any { effectiveVisibility(it) == View.VISIBLE && effectiveAlpha(it) > 0.1f }
-            val smallVisible = smallClockViews.any { effectiveVisibility(it) == View.VISIBLE && effectiveAlpha(it) > 0.1f }
-            if (largeVisible && !smallVisible) state.lastIsLarge = true
-            else if (smallVisible && !largeVisible) state.lastIsLarge = false
-        }
-
-        val enabled = ModulePrefs.isClockEnabled && ModulePrefs.isWallpaperPreviewEnabled
-        val existingSlot = findSlot(root)
-        val allHiddenTargets = largeClockViews + smallClockViews + extraViews
-        var changed = false
-
-        if (enabled) {
-            val measuredTop = (smallClockViews + extraViews + largeClockViews)
-                .mapNotNull { view -> viewTopInRoot(view, root).takeIf { it > 0 } }
-                .minOrNull()
-            if (measuredTop != null) {
-                state.cachedTopOffset = measuredTop
-            } else if (state.cachedTopOffset == 0 && root.width > 0) {
-                state.cachedTopOffset = (root.width * TOP_FRACTION).toInt()
-            }
-
-            allHiddenTargets.forEach { target ->
-                if (hideStockView(target)) changed = true
-            }
-
-            if (existingSlot == null) {
-                val created = PreviewClockSlot(root.context, initialLarge = state.lastIsLarge).apply {
-                    id = View.generateViewId()
-                }
-                val params = createOverlayLayoutParams(root, state.cachedTopOffset)
-                root.addView(created, params)
-                totalSlots.incrementAndGet()
-                HookReporter.count("previewSlotAdded")
-                changed = true
-            } else {
-                existingSlot.setLarge(state.lastIsLarge)
-                if (!existingSlot.isVisible) {
-                    existingSlot.isVisible = true
-                    changed = true
-                }
-                if (existingSlot.alpha != 1f) {
-                    existingSlot.alpha = 1f
-                    changed = true
-                }
-                val lp = existingSlot.layoutParams as? ViewGroup.MarginLayoutParams
-                var lpUpdated = false
-                if (lp != null) {
-                    if (state.cachedTopOffset > 0 && lp.topMargin != state.cachedTopOffset) {
-                        lp.topMargin = state.cachedTopOffset
-                        lpUpdated = true
-                    }
-                    val targetWidth = if (root.width > 0) root.width else lp.width
-                    if (targetWidth > 0 && lp.width != targetWidth) {
-                        lp.width = targetWidth
-                        lpUpdated = true
-                    }
-                    if (lpUpdated) {
-                        existingSlot.layoutParams = lp
-                        changed = true
-                    }
-                }
-                if (root.getChildAt(root.childCount - 1) !== existingSlot) {
-                    existingSlot.bringToFront()
-                    changed = true
-                }
-            }
-        } else {
-            allHiddenTargets.forEach { target ->
-                if (restoreStockView(target)) changed = true
-            }
-            if (existingSlot != null && existingSlot.isVisible) {
-                existingSlot.isVisible = false
-                changed = true
-            }
-        }
-        return changed
-    }
-
-    private fun collectDescendantTargets(
-        group: ViewGroup,
-        largeId: Int,
-        smallId: Int,
-        extraIds: Set<Int>,
-        largeOut: MutableSet<View>,
-        smallOut: MutableSet<View>,
-        extraOut: MutableSet<View>
-    ) {
-        for (i in 0 until group.childCount) {
-            val child = group.getChildAt(i)
-            if (child is PreviewClockSlot) continue
-            val matched = when {
-                largeId != 0 && child.id == largeId -> {
-                    largeOut += child
-                    true
-                }
-                smallId != 0 && child.id == smallId -> {
-                    smallOut += child
-                    true
-                }
-                child.id in extraIds -> {
-                    extraOut += child
-                    true
-                }
-                isStockClockOrExtraClass(child) -> {
-                    if (child !in largeOut && child !in smallOut) {
-                        extraOut += child
-                    }
-                    true
-                }
-                else -> false
-            }
-            if (!matched && child is ViewGroup) {
-                collectDescendantTargets(child, largeId, smallId, extraIds, largeOut, smallOut, extraOut)
-            }
-        }
-    }
-
-    private fun viewTopInRoot(view: View, root: ViewGroup): Int {
-        var top = view.top
-        var parent = view.parent
-        while (parent is ViewGroup && parent !== root) {
-            top += parent.top
-            parent = parent.parent
-        }
-        return if (parent === root) top else 0
-    }
-
-    private fun effectiveVisibility(view: View): Int = hiddenViews[view]?.visibility ?: view.visibility
-
-    private fun effectiveAlpha(view: View): Float = hiddenViews[view]?.alpha ?: view.alpha
-
-    @SuppressLint("DiscouragedApi")
-    private fun resolveResourceId(root: ViewGroup, name: String): Int {
-        val pkg = root.context.packageName
-        val primary = root.resources.getIdentifier(name, ID_TYPE, pkg)
-        if (primary != 0) return primary
-        return if (pkg != SystemUiModule.PACKAGE) {
-            root.resources.getIdentifier(name, ID_TYPE, SystemUiModule.PACKAGE)
-        } else {
-            0
-        }
-    }
-
-    private fun collectClockViews(faceController: Any?, out: MutableSet<View>) {
-        faceController ?: return
-        (faceController.callMethod("getView") as? View)?.let { out += it }
-        val views = faceController.callMethod("getLayout")?.callMethod("getViews") as? List<*>
-        views?.filterIsInstance<View>()?.forEach { out += it }
-    }
-
-    private fun readFlowValue(target: Any, name: String): Any? {
-        val getterName = "get" + name.replaceFirstChar { it.uppercase() }
-        val flow = target.callMethod(getterName) ?: target.fieldValue(name) ?: return null
-        val valueMethod = flow.javaClass.findMethod("getValue") { it.parameterCount == 0 } ?: return null
-        return runCatching { valueMethod.invoke(flow) }.getOrNull()
-    }
-
-    private fun isStockClockOrExtraClass(view: View): Boolean {
-        val className = view.javaClass.name
-        if (className.contains("PreviewClockSlot") || className.contains("ClockFaceView")) return false
-        if (EXTRA_CLASS_PREFIXES.any { className.startsWith(it) }) return true
-        return className.contains("Clock", ignoreCase = true)
-    }
-
     private fun isConstraintLayout(view: ViewGroup): Boolean {
         var cls: Class<*>? = view.javaClass
         while (cls != null && cls != ViewGroup::class.java) {
@@ -789,15 +597,18 @@ object PreviewClockHook {
     private fun createOverlayLayoutParams(root: ViewGroup, topMargin: Int): ViewGroup.LayoutParams {
         val targetWidth = if (root.width > 0) root.width else ViewGroup.LayoutParams.MATCH_PARENT
         if (isConstraintLayout(root)) {
+            val constraintWidth = if (root.width > 0) root.width else 0
             val lp = runCatching {
                 val lpClass = root.javaClass.classLoader?.loadClass(CONSTRAINT_LP_CLASS)
                 val ctor = lpClass?.getConstructor(Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                (ctor?.newInstance(targetWidth, ViewGroup.LayoutParams.WRAP_CONTENT) as? ViewGroup.MarginLayoutParams)?.apply {
+                (ctor?.newInstance(constraintWidth, ViewGroup.LayoutParams.WRAP_CONTENT) as? ViewGroup.MarginLayoutParams)?.apply {
                     setFieldValue("leftToLeft", 0)
                     setFieldValue("rightToRight", 0)
                     setFieldValue("startToStart", 0)
                     setFieldValue("endToEnd", 0)
                     setFieldValue("topToTop", 0)
+                    setFieldValue("bottomToTop", -1)
+                    setFieldValue("bottomToBottom", -1)
                     this.topMargin = topMargin
                     callMethod("validate")
                 }
@@ -810,38 +621,6 @@ object PreviewClockHook {
         ).apply {
             this.topMargin = topMargin
         }
-    }
-
-    private fun hideStockView(view: View): Boolean {
-        var changed = false
-        if (!hiddenViews.containsKey(view)) {
-            hiddenViews[view] = HiddenState(view.visibility, view.alpha)
-        } else if (view.visibility == View.VISIBLE) {
-            hiddenViews[view] = HiddenState(View.VISIBLE, view.alpha.takeIf { it > 0f } ?: 1f)
-        }
-        if (view.visibility != View.INVISIBLE) {
-            view.visibility = View.INVISIBLE
-            changed = true
-        }
-        if (view.alpha != 0f) {
-            view.alpha = 0f
-            changed = true
-        }
-        return changed
-    }
-
-    private fun restoreStockView(view: View): Boolean {
-        val previous = hiddenViews.remove(view) ?: return false
-        var changed = false
-        if (view.visibility != previous.visibility) {
-            view.visibility = previous.visibility
-            changed = true
-        }
-        if (view.alpha != previous.alpha) {
-            view.alpha = previous.alpha
-            changed = true
-        }
-        return changed
     }
 
     private fun findSlot(group: ViewGroup): PreviewClockSlot? {

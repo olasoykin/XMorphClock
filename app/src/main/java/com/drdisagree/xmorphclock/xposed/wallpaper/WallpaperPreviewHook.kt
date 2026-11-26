@@ -127,10 +127,25 @@ object WallpaperPreviewHook {
 
     private fun resolveTopOffset(container: ViewGroup, dateView: View?, timeView: View?): Int {
         val anchor = dateView ?: timeView
-        val anchorTop = anchor?.top ?: 0
-        if (anchorTop > 0) return anchorTop
+        val anchorTop = anchor?.let { viewTopInContainer(it, container) } ?: 0
         val containerWidth = container.width
-        return if (containerWidth > 0) (containerWidth * TOP_FRACTION).toInt() else 0
+        val containerHeight = container.height
+        val minOffset = if (containerHeight > 0) {
+            (containerHeight * 0.08f).toInt().coerceAtLeast((containerWidth * TOP_FRACTION).toInt())
+        } else {
+            (containerWidth * TOP_FRACTION).toInt()
+        }
+        return if (anchorTop > 0) anchorTop.coerceAtLeast(minOffset) else minOffset
+    }
+
+    private fun viewTopInContainer(view: View, container: ViewGroup): Int {
+        var top = view.top
+        var parent = view.parent
+        while (parent is ViewGroup && parent !== container) {
+            top += parent.top
+            parent = parent.parent
+        }
+        return if (parent === container) top else view.top
     }
 
     private fun isConstraintLayout(view: ViewGroup): Boolean {
