@@ -165,25 +165,31 @@ internal object PreviewTargetScanner {
         }
     }
 
-    fun resolveTopOffset(slotRoot: ViewGroup, isLarge: Boolean, scan: ScanResult): Int {
+    fun resolveTopOffset(
+        slotRoot: ViewGroup,
+        isLarge: Boolean,
+        scan: ScanResult,
+        slotHeight: Int = 0
+    ): Int {
         val rootHeight = slotRoot.height
         val rootWidth = slotRoot.width
-        val maxReasonableChildHeight = if (rootHeight > 0) (rootHeight * 0.65f).toInt() else Int.MAX_VALUE
-
-        val primaryViews = if (isLarge) scan.largeViews else scan.smallViews
-        val primaryTop = primaryViews
-            .asSequence()
-            .filter { it.height in 1 until maxReasonableChildHeight }
-            .mapNotNull { view -> viewTopInRoot(view, slotRoot).takeIf { it > 0 } }
-            .minOrNull()
 
         if (rootHeight > 0) {
-            return if (isLarge) {
-                val minLarge = (rootHeight * 0.14f).toInt().coerceAtLeast((rootWidth * 0.14f).toInt())
-                val maxLarge = (rootHeight * 0.34f).toInt().coerceAtLeast(minLarge)
-                val fallbackLarge = (rootHeight * 0.18f).toInt().coerceAtLeast((rootWidth * 0.16f).toInt())
-                primaryTop?.coerceIn(minLarge, maxLarge) ?: fallbackLarge
+            if (isLarge) {
+                val minLarge = (rootHeight * 0.08f).toInt().coerceAtLeast((rootWidth * 0.08f).toInt())
+                if (slotHeight > 0) {
+                    val maxTop = ((rootHeight * 0.80f) - slotHeight).toInt().coerceAtLeast(minLarge)
+                    val centeredTop = ((rootHeight * 0.45f) - (slotHeight * 0.5f)).toInt()
+                    return centeredTop.coerceIn(minLarge, maxTop)
+                }
+                return (rootHeight * 0.22f).toInt().coerceAtLeast(minLarge)
             } else {
+                val maxReasonableChildHeight = (rootHeight * 0.65f).toInt()
+                val primaryTop = scan.smallViews
+                    .asSequence()
+                    .filter { it.height in 1 until maxReasonableChildHeight }
+                    .mapNotNull { view -> viewTopInRoot(view, slotRoot).takeIf { it > 0 } }
+                    .minOrNull()
                 val minSmall = (rootHeight * 0.08f).toInt().coerceAtLeast((rootWidth * 0.10f).toInt())
                 val maxSmall = (rootHeight * 0.28f).toInt().coerceAtLeast(minSmall)
                 val fallbackSmall = (rootHeight * 0.10f).toInt().coerceAtLeast((rootWidth * 0.12f).toInt())
@@ -192,10 +198,17 @@ internal object PreviewTargetScanner {
                     .filter { it.height in 1 until maxReasonableChildHeight }
                     .mapNotNull { view -> viewTopInRoot(view, slotRoot).takeIf { it > 0 } }
                     .minOrNull()
-                smallOrExtraTop?.coerceIn(minSmall, maxSmall) ?: fallbackSmall
+                return smallOrExtraTop?.coerceIn(minSmall, maxSmall) ?: fallbackSmall
             }
         }
 
+        val maxReasonableChildHeight = Int.MAX_VALUE
+        val primaryViews = if (isLarge) scan.largeViews else scan.smallViews
+        val primaryTop = primaryViews
+            .asSequence()
+            .filter { it.height in 1 until maxReasonableChildHeight }
+            .mapNotNull { view -> viewTopInRoot(view, slotRoot).takeIf { it > 0 } }
+            .minOrNull()
         if (primaryTop != null) return primaryTop
         return if (rootWidth > 0) (rootWidth * TOP_FRACTION).toInt() else 0
     }
@@ -381,6 +394,14 @@ internal object PreviewTargetScanner {
         val name = runCatching { view.resources.getResourceEntryName(id) }.getOrNull().orEmpty()
         if (entryNameCache.size < 256) entryNameCache[id] = name
         return name.ifEmpty { null }
+    }
+
+    fun isPreviewClockView(view: View): Boolean {
+        val entry = resolveEntryName(view)
+        if (entry != null && (entry in LARGE_ENTRY_NAMES || entry in SMALL_ENTRY_NAMES || entry in EXTRA_ENTRY_NAMES)) {
+            return true
+        }
+        return isStockClockOrExtraClass(view)
     }
 
     private fun isStockClockOrExtraClass(view: View): Boolean {

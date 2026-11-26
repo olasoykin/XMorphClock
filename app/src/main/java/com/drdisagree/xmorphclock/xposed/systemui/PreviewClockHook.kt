@@ -56,7 +56,10 @@ object PreviewClockHook {
         "KeyguardPreview",
         "LockscreenPreview",
         "KeyguardRemotePreview",
-        "CustomizationProvider"
+        "CustomizationProvider",
+        "ClockPreview",
+        "ClockCarousel",
+        "KeyguardClock"
     )
 
     private val PREVIEW_VIEW_CLASS_HINTS = listOf(
@@ -283,7 +286,9 @@ object PreviewClockHook {
 
     private fun hasPreviewClassHint(view: View): Boolean {
         val name = view.javaClass.name
-        if (PREVIEW_VIEW_CLASS_HINTS.any { name.contains(it) }) return true
+        if (PREVIEW_VIEW_CLASS_HINTS.any { name.contains(it) } || PreviewTargetScanner.isPreviewClockView(view)) {
+            return true
+        }
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
                 if (hasPreviewClassHint(view.getChildAt(i))) return true
@@ -439,7 +444,12 @@ object PreviewClockHook {
                 return changed
             }
 
-            val resolvedTop = PreviewTargetScanner.resolveTopOffset(topRoot, state.lastIsLarge, scan)
+            val resolvedTop = PreviewTargetScanner.resolveTopOffset(
+                slotRoot = topRoot,
+                isLarge = state.lastIsLarge,
+                scan = scan,
+                slotHeight = existingSlot?.height ?: 0
+            )
             if (resolvedTop > 0) {
                 state.cachedTopOffset = resolvedTop
             }
@@ -617,7 +627,8 @@ object PreviewClockHook {
         }
         return FrameLayout.LayoutParams(
             targetWidth,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER_HORIZONTAL
         ).apply {
             this.topMargin = topMargin
         }
