@@ -18,6 +18,7 @@ interface SettingsRepository {
     suspend fun setBurnInProtection(enabled: Boolean)
     suspend fun setThemeMode(mode: ThemeMode)
     suspend fun setOnboardingDone(done: Boolean)
+    suspend fun setWallpaperPreviewEnabled(enabled: Boolean)
     suspend fun setShortcut(slot: ShortcutSlot, affordanceId: String)
     suspend fun syncSystemShortcuts()
 }

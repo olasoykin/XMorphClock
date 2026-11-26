@@ -67,6 +67,11 @@ class SettingsRepositoryImpl(
         local.setOnboardingDone(done)
     }
 
+    override suspend fun setWallpaperPreviewEnabled(enabled: Boolean) = withContext(Dispatchers.IO) {
+        local.setWallpaperPreviewEnabled(enabled)
+        remote.edit { it.putBoolean(PrefKeys.WALLPAPER_PREVIEW_ENABLED, enabled) }
+    }
+
     override suspend fun setShortcut(slot: ShortcutSlot, affordanceId: String) = withContext(Dispatchers.IO) {
         val stamp = local.setShortcut(slot, affordanceId)
         val key = if (slot == ShortcutSlot.LEFT) PrefKeys.SHORTCUT_LEFT else PrefKeys.SHORTCUT_RIGHT
@@ -99,6 +104,7 @@ class SettingsRepositoryImpl(
             it.putInt(PrefKeys.FACE_STYLE, settings.faceStyle)
             local.faceJson?.let { json -> it.putString(PrefKeys.FACE_JSON, json) }
             it.putBoolean(PrefKeys.BURN_IN, settings.burnInProtection)
+            it.putBoolean(PrefKeys.WALLPAPER_PREVIEW_ENABLED, settings.wallpaperPreviewEnabled)
             if (local.hasConfiguredShortcuts) {
                 it.putString(PrefKeys.SHORTCUT_LEFT, settings.shortcutLeft)
                 it.putString(PrefKeys.SHORTCUT_RIGHT, settings.shortcutRight)

@@ -45,6 +45,7 @@ object SystemUiModule {
         NotificationCounter.install()
         ClockController.init()
         ClockAdapters.installSupported(ClockHost())
+        PreviewClockHook.install()
         HookReporter.start()
     }
 }

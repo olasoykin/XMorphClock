@@ -29,7 +29,8 @@ class LocalPrefsSource(context: Context) {
                 ?: ThemeMode.SYSTEM,
             composition = CompositionJsonMapper.fromJson(prefs.getString(PrefKeys.COMPOSITION, null)),
             shortcutLeft = prefs.getString(PrefKeys.SHORTCUT_LEFT, null)?.trim()?.takeIf { it.isNotEmpty() } ?: SystemShortcut.DEFAULT_LEFT.id,
-            shortcutRight = prefs.getString(PrefKeys.SHORTCUT_RIGHT, null)?.trim()?.takeIf { it.isNotEmpty() } ?: SystemShortcut.DEFAULT_RIGHT.id
+            shortcutRight = prefs.getString(PrefKeys.SHORTCUT_RIGHT, null)?.trim()?.takeIf { it.isNotEmpty() } ?: SystemShortcut.DEFAULT_RIGHT.id,
+            wallpaperPreviewEnabled = prefs.getBoolean(PrefKeys.WALLPAPER_PREVIEW_ENABLED, PrefKeys.DEFAULT_WALLPAPER_PREVIEW_ENABLED)
         )
 
     val hasConfiguredShortcuts: Boolean
@@ -100,6 +101,9 @@ class LocalPrefsSource(context: Context) {
             right?.let { putString(PrefKeys.SHORTCUT_RIGHT, it) }
         }
     }
+    fun setWallpaperPreviewEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(PrefKeys.WALLPAPER_PREVIEW_ENABLED, enabled) }
+    }
 }
 
 private val SETTINGS_KEYS = setOf(
@@ -109,5 +113,6 @@ private val SETTINGS_KEYS = setOf(
     PrefKeys.THEME_MODE,
     PrefKeys.COMPOSITION,
     PrefKeys.SHORTCUT_LEFT,
-    PrefKeys.SHORTCUT_RIGHT
+    PrefKeys.SHORTCUT_RIGHT,
+    PrefKeys.WALLPAPER_PREVIEW_ENABLED
 )

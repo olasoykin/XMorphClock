@@ -14,6 +14,8 @@
     <string name="setting_burn_in">Burn-in protection</string>
     <string name="setting_burn_in_summary">Shift the clock on AOD</string>
     <string name="setting_clock_summary">Replace the stock lockscreen clock</string>
+    <string name="setting_wallpaper_preview">Fondo y estilo</string>
+    <string name="setting_wallpaper_preview_summary">Muestra el reloj en la vista previa del sistema</string>
     <string name="version_label">Version %1$s</string>
     <string name="status_step_systemui">SystemUI hooked</string>
     <string name="status_build">Build</string>

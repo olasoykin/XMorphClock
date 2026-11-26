@@ -12,6 +12,7 @@ fun settingsViewModelFactory(container: AppContainer): ViewModelProvider.Factory
             setClockEnabled = container.setClockEnabled,
             setBurnInProtection = container.setBurnInProtection,
             setThemeMode = container.setThemeMode,
+            setWallpaperPreviewEnabled = container.setWallpaperPreviewEnabled,
             observeWeather = container.observeWeather,
             saveWeatherSettings = container.saveWeatherSettings,
             refreshWeather = container.refreshWeather,

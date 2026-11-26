@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -121,6 +122,10 @@ fun SettingsScreen(
                 modifier = Modifier.weight(1f)
             )
         }
+        WallpaperPreviewCard(
+            checked = state.wallpaperPreviewEnabled,
+            onCheckedChange = viewModel::onWallpaperPreviewEnabledChange
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SettingsTile(
                 icon = R.drawable.ic_depth,
@@ -204,6 +209,63 @@ private fun ToggleTile(
             Spacer(Modifier.height(2.dp))
             Text(summary, style = MaterialTheme.typography.bodySmall, color = summaryColor, minLines = 2, maxLines = 2)
             Spacer(Modifier.height(12.dp))
+            ExpressiveSwitch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    }
+}
+
+@Composable
+private fun WallpaperPreviewCard(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = expressivePillShape(interaction, restCorner = 28.dp, pressedCorner = 20.dp)
+    val containerColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+        tween(320),
+        label = "previewContainerTint"
+    )
+    val badgeColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+        tween(320),
+        label = "previewBadge"
+    )
+    val glyphColor by animateColorAsState(
+        if (checked) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        tween(320),
+        label = "previewGlyph"
+    )
+    val titleColor = if (checked) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val summaryColor = if (checked) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Card(
+        onClick = { onCheckedChange(!checked) },
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        interactionSource = interaction,
+        modifier = Modifier.fillMaxWidth().semantics { role = Role.Switch }
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = badgeColor,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    AppIcon(R.drawable.ic_wallpaper, tint = glyphColor, size = 22.dp)
+                }
+            }
+            Spacer(Modifier.size(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.setting_wallpaper_preview), style = MaterialTheme.typography.titleSmall, color = titleColor)
+                Spacer(Modifier.height(2.dp))
+                Text(stringResource(R.string.setting_wallpaper_preview_summary), style = MaterialTheme.typography.bodySmall, color = summaryColor)
+            }
+            Spacer(Modifier.size(12.dp))
             ExpressiveSwitch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }

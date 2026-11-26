@@ -88,6 +88,9 @@ object ModulePrefs {
     val isBurnInProtectionEnabled: Boolean
         get() = boolean(PrefKeys.BURN_IN, PrefKeys.DEFAULT_BURN_IN)
 
+    val isWallpaperPreviewEnabled: Boolean
+        get() = boolean(PrefKeys.WALLPAPER_PREVIEW_ENABLED, PrefKeys.DEFAULT_WALLPAPER_PREVIEW_ENABLED)
+
     val shortcutLeft: String?
         get() = string(PrefKeys.SHORTCUT_LEFT)
 
@@ -193,6 +196,10 @@ object ModulePrefs {
 
     fun addListener(listener: () -> Unit) {
         listeners += listener
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners -= listener
     }
 
     private fun observe(tries: Int) {

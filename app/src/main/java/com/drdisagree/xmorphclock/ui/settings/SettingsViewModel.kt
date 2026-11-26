@@ -28,6 +28,7 @@ import com.drdisagree.xmorphclock.domain.usecase.ObserveFacesUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthOpacityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetDepthWidgetsFrontUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetThemeModeUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SetWallpaperPreviewEnabledUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherCityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherLocationUseCase
 import kotlinx.coroutines.Job
@@ -45,6 +46,7 @@ class SettingsViewModel(
     private val setClockEnabled: SetClockEnabledUseCase,
     private val setBurnInProtection: SetBurnInProtectionUseCase,
     private val setThemeMode: SetThemeModeUseCase,
+    private val setWallpaperPreviewEnabled: SetWallpaperPreviewEnabledUseCase,
     observeWeather: ObserveWeatherUseCase,
     private val saveWeatherSettings: SaveWeatherSettingsUseCase,
     private val refreshWeather: RefreshWeatherUseCase,
@@ -89,6 +91,7 @@ class SettingsViewModel(
         SettingsUiState(
             clockEnabled = settings.clockEnabled,
             burnInProtection = settings.burnInProtection,
+            wallpaperPreviewEnabled = settings.wallpaperPreviewEnabled,
             themeMode = settings.themeMode,
             weather = weatherUi.weather,
             locationNotFound = weatherUi.missing,
@@ -120,6 +123,10 @@ class SettingsViewModel(
 
     fun onClockEnabledChange(enabled: Boolean) {
         viewModelScope.launch { setClockEnabled(enabled) }
+    }
+
+    fun onWallpaperPreviewEnabledChange(enabled: Boolean) {
+        viewModelScope.launch { setWallpaperPreviewEnabled(enabled) }
     }
 
     fun onThemeModeChange(mode: ThemeMode) {

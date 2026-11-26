@@ -33,6 +33,8 @@ object PrefKeys {
     const val SHORTCUT_RIGHT = "shortcut_right"
     const val SHORTCUT_LEFT_STAMP = "shortcut_left_stamp"
     const val SHORTCUT_RIGHT_STAMP = "shortcut_right_stamp"
+    const val WALLPAPER_PREVIEW_ENABLED = "wallpaper_preview_enabled"
     const val DEFAULT_CLOCK_ENABLED = true
     const val DEFAULT_BURN_IN = true
+    const val DEFAULT_WALLPAPER_PREVIEW_ENABLED = true
 }

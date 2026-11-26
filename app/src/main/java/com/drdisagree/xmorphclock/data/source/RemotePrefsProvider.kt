@@ -80,7 +80,12 @@ class RemotePrefsProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     private companion object {
-        val SCOPE = setOf(ReportContract.SYSTEMUI_PACKAGE)
+        val SCOPE = setOf(
+            ReportContract.SYSTEMUI_PACKAGE,
+            "com.android.wallpaper",
+            "com.google.android.apps.wallpaper",
+            "com.google.android.apps.wallpaper.pixel"
+        )
         const val READ_ONLY = "r"
     }
 }

@@ -7,5 +7,6 @@ data class ClockSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val composition: Composition = Composition(),
     val shortcutLeft: String = SystemShortcut.DEFAULT_LEFT.id,
-    val shortcutRight: String = SystemShortcut.DEFAULT_RIGHT.id
+    val shortcutRight: String = SystemShortcut.DEFAULT_RIGHT.id,
+    val wallpaperPreviewEnabled: Boolean = true
 )

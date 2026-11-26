@@ -21,6 +21,33 @@ object FaceComposer {
 
     fun isClockLayer(layerId: String): Boolean = itemOf(layerId) == null
 
+    fun clockOnly(face: ClockFace): ClockFace {
+        val clockLayers = face.layers.filter { isClockLayer(it.id) }
+        if (clockLayers.size == face.layers.size) return face
+
+        fun findClockChild(root: FaceNode?): FaceNode? {
+            if (root == null) return null
+            if (root is StackNode) {
+                val matching = root.children.firstOrNull { node ->
+                    val first = firstLayer(node) ?: return@firstOrNull false
+                    isClockLayer(first)
+                }
+                if (matching != null) return matching
+            }
+            return root
+        }
+
+        val largeNode = findClockChild(face.large) ?: face.large
+        val smallNode = findClockChild(face.small) ?: face.small
+        return face.copy(
+            layers = clockLayers,
+            large = largeNode,
+            small = smallNode,
+            aodLarge = findClockChild(face.aodLarge),
+            aodSmall = findClockChild(face.aodSmall)
+        )
+    }
+
     fun compose(parts: ComposedFaces): ClockFace {
         val clock = parts.clock
         val items = parts.composition.items

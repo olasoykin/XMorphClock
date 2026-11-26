@@ -101,6 +101,7 @@ import com.drdisagree.xmorphclock.domain.usecase.SetDepthWidgetsFrontUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetLockscreenShortcutUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetOnboardingDoneUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetThemeModeUseCase
+import com.drdisagree.xmorphclock.domain.usecase.SetWallpaperPreviewEnabledUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherCityUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SetWeatherLocationUseCase
 import com.drdisagree.xmorphclock.domain.usecase.SnapshotWidgetsUseCase
@@ -209,6 +210,7 @@ class AppContainer(context: Context) {
     val setClockEnabled = SetClockEnabledUseCase(settingsRepository)
     val setBurnInProtection = SetBurnInProtectionUseCase(settingsRepository)
     val setThemeMode = SetThemeModeUseCase(settingsRepository)
+    val setWallpaperPreviewEnabled = SetWallpaperPreviewEnabledUseCase(settingsRepository)
     val setOnboardingDone = SetOnboardingDoneUseCase(settingsRepository)
     val setLockscreenShortcut = SetLockscreenShortcutUseCase(settingsRepository)
     val syncLockscreenShortcuts = SyncLockscreenShortcutsUseCase(settingsRepository)

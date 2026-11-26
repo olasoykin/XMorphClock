@@ -161,6 +161,40 @@ class FaceComposerTest {
         assertEquals(composed, FaceComposer.compose(restored))
     }
 
+    @Test
+    fun clockOnlyStripsWidgetsWhileKeepingClockAndScale() {
+        val clock = load(CLOCK_DIR).first()
+        val weather = load(WEATHER_DIR).first()
+        val widget = load(WIDGET_DIR).first()
+        val comp = Composition(
+            items = listOf(
+                CompositionItem(
+                    id = 0,
+                    clock = true,
+                    largeScale = 1.2f,
+                    smallScale = 0.9f,
+                    largeWidthStretch = 1.15f
+                )
+            )
+        )
+            .add(3100, FacePlacement(0.5f, 0.7f, FaceAlign.CENTER), FacePlacement(0.5f, 0.5f, FaceAlign.CENTER))
+            .add(4100, FacePlacement(0.3f, 0.8f, FaceAlign.CENTER), FacePlacement(0.3f, 0.6f, FaceAlign.CENTER))
+
+        val composed = FaceComposer.compose(ComposedFaces(clock, mapOf(3100 to weather, 4100 to widget), comp))
+        assertTrue(composed.layers.any { !FaceComposer.isClockLayer(it.id) })
+
+        val stripped = FaceComposer.clockOnly(composed)
+        assertTrue(stripped.layers.all { FaceComposer.isClockLayer(it.id) })
+        assertEquals(clock.layers.size, stripped.layers.size)
+        assertTrue((stripped.large as? StackNode)?.children?.size == (clock.large as? StackNode)?.children?.size || stripped.large !is StackNode)
+    }
+
+    @Test
+    fun clockOnlyReturnsSameWhenNoWidgetsPresent() {
+        val clock = load(CLOCK_DIR).first()
+        assertSame(clock, FaceComposer.clockOnly(clock))
+    }
+
     private companion object {
         const val CLOCK_DIR = "src/main/assets/clock_faces"
         const val WEATHER_DIR = "src/main/assets/weather_faces"
