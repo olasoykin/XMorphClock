@@ -2,14 +2,20 @@ package com.drdisagree.xmorphclock.xposed.wallpaper
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.Dialog
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.Gravity
+import android.view.SurfaceControlViewHost
 import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.TextClock
+import android.widget.TextView
 import androidx.core.view.isVisible
 import com.drdisagree.xmorphclock.xposed.hook.HookEnv
 import com.drdisagree.xmorphclock.xposed.hook.callMethod
@@ -28,6 +34,7 @@ object WallpaperPreviewHook {
     private const val CLOCK_CAROUSEL_CLASS = "com.android.customization.picker.clock.ui.view.ClockCarouselView"
     private const val CLOCK_HOST_CLASS = "com.android.customization.picker.clock.ui.view.ClockHostView"
     private const val THEME_PICKER_CLOCK_HOST_CLASS = "com.android.customization.picker.clock.ui.view.ThemePickerClockHostView"
+    private const val CLOCK_PREVIEW_VIEW_CLASS = "com.android.customization.picker.clock.ui.view.ClockPreviewView"
     private const val CONSTRAINT_LAYOUT_SUFFIX = ".ConstraintLayout"
     private const val CONSTRAINT_LP_CLASS = "androidx.constraintlayout.widget.ConstraintLayout\$LayoutParams"
     private const val LOCK_TIME_ID = "lock_time"
@@ -35,23 +42,67 @@ object WallpaperPreviewHook {
     private const val ID_TYPE = "id"
     private const val TOP_FRACTION = 0.14f
 
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val CLOCK_DIGITS_REGEX = Regex(
+        "^\\d{1,2}(?:[:\\s]\\d{2})?(?:\\s?[AP]M)?$",
+        RegexOption.IGNORE_CASE
+    )
+    private val DATE_TEXT_REGEX = Regex(
+        "^(?:[a-zA-ZÀ-ÿ]{2,12}[.,]?\\s+(?:\\d{1,2}\\s+(?:de\\s+)?[a-zA-ZÀ-ÿ]{2,12}[.,]?|[a-zA-ZÀ-ÿ]{2,12}[.,]?\\s+\\d{1,2})|\\d{1,2}\\s+(?:de\\s+)?[a-zA-ZÀ-ÿ]{3,12}[.,]?)(?:[.,]?\\s+\\d{2,4})?$"
+    )
+
+    private val EXCLUDED_ENTRY_KEYWORDS = listOf(
+        "shortcut",
+        "affordance",
+        "flashlight",
+        "camera",
+        "button",
+        "chip",
+        "wallpaper",
+        "scrim",
+        "toolbar",
+        "action_bar",
+        "swatch",
+        "picker",
+        "bottom_sheet"
+    )
+
+    private val MAIN_PREVIEW_SURFACE_HINTS = listOf(
+        "workspace",
+        "wallpaper",
+        "lockscreen_preview",
+        "lock_screen_preview",
+        "preview_surface"
+    )
+
     private val CLOCK_CLASS_PREFIXES = listOf(
         "com.android.keyguard.AnimatableClockView",
         "com.android.keyguard.KeyguardClockSwitch",
         "com.android.keyguard.KeyguardSliceView",
         "com.android.systemui.clocks.",
         "com.google.android.systemui.clocks.",
+        "com.google.android.systemui.keyguard.clocks.",
         "com.android.systemui.shared.clocks.",
         "com.android.systemui.customization.clocks.",
         "com.android.systemui.plugins.clocks.",
-        "com.android.customization.picker.clock.ui.view.ClockHostView",
-        "com.android.customization.picker.clock.ui.view.ThemePickerClockHostView"
+        "com.android.systemui.plugins.keyguard.ui.clocks.",
+        "com.google.android.systemui.smartspace.",
+        "com.android.systemui.smartspace.",
+        "com.android.systemui.statusbar.policy.DateView",
+        CLOCK_HOST_CLASS,
+        THEME_PICKER_CLOCK_HOST_CLASS,
+        CLOCK_PREVIEW_VIEW_CLASS,
+        CLOCK_CAROUSEL_CLASS
     )
 
     private val CLOCK_CLASS_KEYWORDS = listOf(
         "ClockHostView",
-        "AnimatableClockView",
-        "FlexClockView",
+        "ClockPreviewView",
+        "ClockCarousel",
+        "ClockSection",
+        "ClockSwitch",
+        "AnimatableClock",
+        "FlexClock",
         "SimpleDigitalClockTextView",
         "DigitalClockFaceView",
         "ComposedDigitalClockView",
@@ -60,7 +111,11 @@ object WallpaperPreviewHook {
         "ClockFace",
         "DigitalClock",
         "AnalogClock",
-        "ClockContainer"
+        "ClockContainer",
+        "Smartspace",
+        "KeyguardSlice",
+        "DateView",
+        "TextClock"
     )
 
     private val CLOCK_ENTRY_NAMES = setOf(
@@ -68,13 +123,31 @@ object WallpaperPreviewHook {
         LOCK_DATE_ID,
         "lockscreen_clock_view",
         "lockscreen_clock_view_large",
+        "lockscreen_clock_host_view",
+        "lockscreen_clock",
         "clock_host_view",
         "clock_view",
         "clock_view_large",
+        "clock_container",
+        "clock_preview",
+        "clock_carousel",
+        "preview_clock",
         "large_clock_container",
         "small_clock_container",
+        "large_clock_host_view",
+        "small_clock_host_view",
+        "keyguard_clock_container",
+        "keyguard_status_view",
+        "keyguard_status_area",
+        "keyguard_slice_view",
         "date_smartspace_view",
         "date_smartspace_view_large",
+        "weather_smartspace_view",
+        "weather_smartspace_view_large",
+        "smartspace_view",
+        "smartspace_container",
+        "date_view",
+        "keyguard_date_view",
         "bc_smartspace_view"
     )
 
@@ -95,6 +168,16 @@ object WallpaperPreviewHook {
         installLegacyPreviewerHook()
         installClockOverlayHooks()
         installActivityDecorHook()
+        installDialogDecorHook()
+        installSurfaceControlHostHook()
+    }
+
+    internal fun isPreviewClockOrDateText(rawText: String?): Boolean {
+        val text = rawText?.trim()?.replace(WHITESPACE_REGEX, " ") ?: return false
+        if (text.isEmpty() || text.length > 32) return false
+        if (CLOCK_DIGITS_REGEX.matches(text)) return true
+        if (text.contains('/') || text.contains(':')) return false
+        return DATE_TEXT_REGEX.matches(text)
     }
 
     private fun installLegacyPreviewerHook() {
@@ -116,7 +199,12 @@ object WallpaperPreviewHook {
     }
 
     private fun installClockOverlayHooks() {
-        listOf(CLOCK_CAROUSEL_CLASS, CLOCK_HOST_CLASS, THEME_PICKER_CLOCK_HOST_CLASS).forEach { className ->
+        listOf(
+            CLOCK_CAROUSEL_CLASS,
+            CLOCK_HOST_CLASS,
+            THEME_PICKER_CLOCK_HOST_CLASS,
+            CLOCK_PREVIEW_VIEW_CLASS
+        ).forEach { className ->
             val cls = HookEnv.findClass(className) ?: return@forEach
             cls.declaredConstructors.forEach { constructor ->
                 constructor.isAccessible = true
@@ -139,6 +227,35 @@ object WallpaperPreviewHook {
                 watchDecorView(decor)
             }
         }
+        Activity::class.java.findMethod("onWindowFocusChanged") {
+            it.parameterCount == 1 && it.parameterTypes[0] == Boolean::class.javaPrimitiveType
+        }?.hookAfter { chain, _ ->
+            val hasFocus = chain.args.getOrNull(0) as? Boolean ?: false
+            if (!hasFocus) return@hookAfter
+            val activity = chain.thisObject as? Activity ?: return@hookAfter
+            val decor = activity.window?.decorView as? ViewGroup ?: return@hookAfter
+            watchDecorView(decor)
+        }
+    }
+
+    private fun installDialogDecorHook() {
+        Dialog::class.java.findMethod("onStart") { it.parameterCount == 0 }?.hookAfter { chain, _ ->
+            val dialog = chain.thisObject as? Dialog ?: return@hookAfter
+            val decor = dialog.window?.decorView as? ViewGroup ?: return@hookAfter
+            watchDecorView(decor)
+        }
+    }
+
+    private fun installSurfaceControlHostHook() {
+        SurfaceControlViewHost::class.java.declaredMethods
+            .filter { it.name == "setView" && it.parameterCount >= 1 && View::class.java.isAssignableFrom(it.parameterTypes[0]) }
+            .forEach { method ->
+                method.isAccessible = true
+                method.hookAfter { chain, _ ->
+                    val root = chain.args.getOrNull(0) as? ViewGroup ?: return@hookAfter
+                    watchDecorView(root)
+                }
+            }
     }
 
     private fun watchDecorView(decor: ViewGroup) {
@@ -170,7 +287,8 @@ object WallpaperPreviewHook {
 
         val overlayClocks = LinkedHashSet<View>()
         if (previewSurfaces.isNotEmpty()) {
-            collectOverlayClocks(decor, previewSurfaces, overlayClocks)
+            val protectedAncestors = collectProtectedAncestors(decor)
+            collectOverlayClocks(decor, previewSurfaces, protectedAncestors, overlayClocks)
         }
 
         var changed = false
@@ -189,16 +307,77 @@ object WallpaperPreviewHook {
         return changed
     }
 
+    private fun collectProtectedAncestors(decor: ViewGroup): Set<View> {
+        val protected = HashSet<View>()
+        collectSurfaceAndSlotAncestors(decor, decor, protected)
+        return protected
+    }
+
+    private fun collectSurfaceAndSlotAncestors(
+        current: ViewGroup,
+        stopAt: ViewGroup,
+        out: MutableSet<View>
+    ): Boolean {
+        var containsProtected = false
+        for (i in 0 until current.childCount) {
+            val child = current.getChildAt(i)
+            val isProtectedLeaf = child is PreviewClockSlot ||
+                ((child is SurfaceView || child is TextureView) && !isDedicatedClockSurface(child))
+            if (isProtectedLeaf) {
+                out += child
+                containsProtected = true
+            } else if (child is ViewGroup && collectSurfaceAndSlotAncestors(child, stopAt, out)) {
+                containsProtected = true
+            }
+        }
+        if (containsProtected) {
+            var cursor: View? = current
+            while (cursor != null) {
+                out += cursor
+                if (cursor === stopAt) break
+                cursor = cursor.parent as? View
+            }
+        }
+        return containsProtected
+    }
+
+    private fun isDedicatedClockSurface(view: View): Boolean {
+        val entry = resolveEntryName(view)
+        if (entry != null) {
+            if (MAIN_PREVIEW_SURFACE_HINTS.any { entry.contains(it, ignoreCase = true) }) {
+                return false
+            }
+            if (entry in CLOCK_ENTRY_NAMES || entry.contains("clock", ignoreCase = true)) {
+                return true
+            }
+        }
+        var cls: Class<*>? = view.javaClass
+        while (cls != null && cls != SurfaceView::class.java && cls != TextureView::class.java && cls != View::class.java) {
+            val name = cls.name
+            if (CLOCK_CLASS_PREFIXES.any { name.startsWith(it) } ||
+                CLOCK_CLASS_KEYWORDS.any { name.contains(it, ignoreCase = true) }
+            ) {
+                return true
+            }
+            cls = cls.superclass
+        }
+        return false
+    }
+
     private fun collectPreviewSurfaceRects(group: ViewGroup, decor: ViewGroup, out: MutableList<Rect>) {
-        val minW = (decor.width * 0.25f).toInt().coerceAtLeast(100)
-        val minH = (decor.height * 0.25f).toInt().coerceAtLeast(150)
+        val minW = (decor.width * 0.15f).toInt().coerceAtLeast(80)
+        val minH = (decor.height * 0.15f).toInt().coerceAtLeast(120)
         for (i in 0 until group.childCount) {
             val child = group.getChildAt(i)
-            val isPreviewSurface = (child is SurfaceView || child is TextureView)
-            if (isPreviewSurface && child.isVisible && child.width >= minW && child.height >= minH) {
+            val isPreviewSurface = (child is SurfaceView || child is TextureView) && !isDedicatedClockSurface(child)
+            if (isPreviewSurface && child.isVisible) {
                 val rect = globalVisibleBounds(child)
-                if (!rect.isEmpty) out += rect
-            } else if (child is ViewGroup) {
+                if (!rect.isEmpty && rect.width() >= minW && rect.height() >= minH) {
+                    out += rect
+                    continue
+                }
+            }
+            if (child is ViewGroup) {
                 collectPreviewSurfaceRects(child, decor, out)
             }
         }
@@ -207,43 +386,93 @@ object WallpaperPreviewHook {
     private fun collectOverlayClocks(
         group: ViewGroup,
         previewSurfaces: List<Rect>,
+        protectedAncestors: Set<View>,
         out: MutableSet<View>
     ) {
         for (i in 0 until group.childCount) {
             val child = group.getChildAt(i)
-            if (child is PreviewClockSlot || child is SurfaceView) continue
+            if (child is PreviewClockSlot) continue
+            if ((child is SurfaceView || child is TextureView) && !isDedicatedClockSurface(child)) continue
 
-            if (isOverlayClockCandidate(child)) {
+            if (child !in protectedAncestors) {
                 val bounds = globalVisibleBounds(child)
-                val overlapsPreview = previewSurfaces.any { surfaceRect ->
-                    val minOverlayHeight = (surfaceRect.height() * 0.12f).toInt().coerceAtLeast(32)
-                    bounds.height() >= minOverlayHeight && Rect.intersects(bounds, surfaceRect)
-                }
-                if (overlapsPreview) {
+                if (!bounds.isEmpty && isOverlayClockCandidate(child, bounds, previewSurfaces)) {
                     out += child
                     continue
                 }
             }
 
             if (child is ViewGroup) {
-                collectOverlayClocks(child, previewSurfaces, out)
+                collectOverlayClocks(child, previewSurfaces, protectedAncestors, out)
             }
         }
     }
 
-    private fun isOverlayClockCandidate(view: View): Boolean {
+    private fun isOverlayClockCandidate(
+        view: View,
+        bounds: Rect,
+        previewSurfaces: List<Rect>
+    ): Boolean {
         val entry = resolveEntryName(view)
+        if (entry != null && EXCLUDED_ENTRY_KEYWORDS.any { entry.contains(it, ignoreCase = true) }) {
+            return false
+        }
+
+        val matchingSurface = previewSurfaces.firstOrNull { surfaceRect ->
+            overlapsPreviewSurface(bounds, surfaceRect)
+        } ?: return false
+
+        if (isExplicitClockClassOrEntry(view, entry)) {
+            return true
+        }
+
+        if (view is TextView &&
+            view !is EditText &&
+            view !is Button &&
+            !view.isClickable &&
+            !view.isLongClickable
+        ) {
+            val upperLimitY = matchingSurface.top + (matchingSurface.height() * 0.72f)
+            if (bounds.centerY() <= upperLimitY && isPreviewClockOrDateText(view.text?.toString())) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun isExplicitClockClassOrEntry(view: View, entry: String?): Boolean {
         if (entry != null && entry in CLOCK_ENTRY_NAMES) return true
+        if (view is TextClock) return true
 
         var cls: Class<*>? = view.javaClass
         while (cls != null && cls != ViewGroup::class.java && cls != View::class.java) {
             val name = cls.name
             if (name.contains("PreviewClockSlot") || name.contains("ClockFaceView")) return false
             if (CLOCK_CLASS_PREFIXES.any { name.startsWith(it) }) return true
-            if (CLOCK_CLASS_KEYWORDS.any { name.contains(it) }) return true
+            if (CLOCK_CLASS_KEYWORDS.any { name.contains(it, ignoreCase = true) }) return true
             cls = cls.superclass
         }
         return false
+    }
+
+    private fun overlapsPreviewSurface(bounds: Rect, surfaceRect: Rect): Boolean {
+        if (bounds.width() < 6 || bounds.height() < 6) return false
+        if (bounds.width() > surfaceRect.width() * 1.35f || bounds.height() > surfaceRect.height() * 1.35f) {
+            return false
+        }
+        val interLeft = maxOf(bounds.left, surfaceRect.left)
+        val interTop = maxOf(bounds.top, surfaceRect.top)
+        val interRight = minOf(bounds.right, surfaceRect.right)
+        val interBottom = minOf(bounds.bottom, surfaceRect.bottom)
+        if (interLeft >= interRight || interTop >= interBottom) return false
+
+        if (surfaceRect.contains(bounds.centerX(), bounds.centerY())) return true
+
+        val boundsArea = bounds.width().toLong() * bounds.height().toLong()
+        if (boundsArea <= 0L) return false
+        val interArea = (interRight - interLeft).toLong() * (interBottom - interTop).toLong()
+        return interArea * 100L >= boundsArea * 40L
     }
 
     private fun resolveEntryName(view: View): String? {
@@ -257,9 +486,15 @@ object WallpaperPreviewHook {
 
     private fun globalVisibleBounds(view: View): Rect {
         if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return Rect()
+        val rect = Rect()
+        if (view.getGlobalVisibleRect(rect) && !rect.isEmpty) {
+            return rect
+        }
         val loc = IntArray(2)
         view.getLocationInWindow(loc)
-        return Rect(loc[0], loc[1], loc[0] + view.width, loc[1] + view.height)
+        val scaledW = (view.width * kotlin.math.abs(view.scaleX)).toInt().coerceAtLeast(1)
+        val scaledH = (view.height * kotlin.math.abs(view.scaleY)).toInt().coerceAtLeast(1)
+        return Rect(loc[0], loc[1], loc[0] + scaledW, loc[1] + scaledH)
     }
 
     private fun enforceContainer(container: ViewGroup) {
@@ -404,6 +639,8 @@ object WallpaperPreviewHook {
     private fun hideStockView(view: View?): Boolean {
         view ?: return false
         var changed = false
+        if (view.animation != null) view.clearAnimation()
+        view.animate().cancel()
         when (view.visibility) {
             View.VISIBLE -> {
                 hiddenViews[view] = HiddenState(View.VISIBLE, view.alpha.takeIf { it > 0f } ?: 1f)

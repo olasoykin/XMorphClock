@@ -29,6 +29,7 @@ object PreviewClockHook {
 
     private const val BINDER_CLASS = "com.android.systemui.keyguard.ui.binder.KeyguardPreviewClockViewBinder"
     private const val VIEW_BINDER_CLASS = "com.android.systemui.keyguard.ui.binder.KeyguardPreviewViewBinder"
+    private const val SMARTSPACE_BINDER_CLASS = "com.android.systemui.keyguard.ui.binder.KeyguardPreviewSmartspaceViewBinder"
     private const val RENDERER_CLASS = "com.android.systemui.keyguard.ui.preview.KeyguardPreviewRenderer"
     private const val CLOCK_VM_CLASS = "com.android.systemui.keyguard.ui.viewmodel.KeyguardPreviewClockViewModel"
     private const val CLOCK_VM_ALT_CLASS = "com.android.systemui.keyguard.ui.preview.KeyguardPreviewClockViewModel"
@@ -104,17 +105,19 @@ object PreviewClockHook {
     fun install() {
         val binderClass = HookEnv.findClass(BINDER_CLASS)
         val viewBinderClass = HookEnv.findClass(VIEW_BINDER_CLASS)
+        val smartspaceBinderClass = HookEnv.findClass(SMARTSPACE_BINDER_CLASS)
         val rendererClass = HookEnv.findClass(RENDERER_CLASS)
         val vmClass = HookEnv.findClass(CLOCK_VM_CLASS) ?: HookEnv.findClass(CLOCK_VM_ALT_CLASS)
 
         HookReporter.probe(
             "PreviewClock: binder=${ok(binderClass)}, viewBinder=${ok(viewBinderClass)}, " +
-                "renderer=${ok(rendererClass)}, vm=${ok(vmClass)}"
+                "smartspaceBinder=${ok(smartspaceBinderClass)}, renderer=${ok(rendererClass)}, vm=${ok(vmClass)}"
         )
 
         vmClass?.let(::hookClockViewModel)
         binderClass?.let(::hookPreviewBinder)
         viewBinderClass?.let(::hookPreviewViewBinder)
+        smartspaceBinderClass?.let(::hookPreviewViewBinder)
         rendererClass?.let(::hookPreviewRenderer)
         hookSurfaceControlViewHost()
     }
@@ -460,6 +463,7 @@ object PreviewClockHook {
                 }
                 val params = createOverlayLayoutParams(topRoot, state.cachedTopOffset)
                 topRoot.addView(created, params)
+                ensureSlotAboveSiblings(topRoot, created)
                 totalSlots.incrementAndGet()
                 HookReporter.count("previewSlotAdded")
                 changed = true
@@ -492,6 +496,9 @@ object PreviewClockHook {
                 }
                 if (topRoot.getChildAt(topRoot.childCount - 1) !== existingSlot) {
                     existingSlot.bringToFront()
+                    changed = true
+                }
+                if (ensureSlotAboveSiblings(topRoot, existingSlot)) {
                     changed = true
                 }
             }
@@ -550,6 +557,7 @@ object PreviewClockHook {
                     if (isLarge) Gravity.CENTER else Gravity.START or Gravity.TOP
                 )
                 host.addView(created, params)
+                ensureSlotAboveSiblings(host, created)
                 totalSlots.incrementAndGet()
                 HookReporter.count("previewSlotAdded")
                 changed = true
@@ -566,6 +574,9 @@ object PreviewClockHook {
                 }
                 if (host.getChildAt(host.childCount - 1) !== existingSlot) {
                     existingSlot.bringToFront()
+                    changed = true
+                }
+                if (ensureSlotAboveSiblings(host, existingSlot)) {
                     changed = true
                 }
             }
@@ -640,6 +651,28 @@ object PreviewClockHook {
             if (child is PreviewClockSlot) return child
         }
         return null
+    }
+
+    private fun ensureSlotAboveSiblings(container: ViewGroup, slot: PreviewClockSlot): Boolean {
+        val maxSiblingZ = maxOtherChildZ(container, slot)
+        if (maxSiblingZ >= slot.z) {
+            val targetTranslationZ = (maxSiblingZ - slot.elevation) + 1f
+            if (slot.translationZ != targetTranslationZ) {
+                slot.translationZ = targetTranslationZ
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun maxOtherChildZ(container: ViewGroup, excluded: View): Float {
+        var maxZ = 0f
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child === excluded) continue
+            if (child.z > maxZ) maxZ = child.z
+        }
+        return maxZ
     }
 
     private fun logThrottled(message: String, throwable: Throwable) {

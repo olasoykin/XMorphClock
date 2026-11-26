@@ -3,6 +3,7 @@ package com.drdisagree.xmorphclock.xposed.systemui
 import android.annotation.SuppressLint
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextClock
 import com.drdisagree.xmorphclock.xposed.hook.callMethod
 import com.drdisagree.xmorphclock.xposed.hook.fieldValue
 import com.drdisagree.xmorphclock.xposed.hook.findMethod
@@ -36,11 +37,21 @@ internal object PreviewTargetScanner {
 
     private val EXTRA_ENTRY_NAMES = setOf(
         "clock_host_view",
+        "lockscreen_clock_host_view",
         "keyguard_clock_container",
+        "keyguard_status_area",
+        "keyguard_status_view",
         "date_smartspace_view",
         "date_smartspace_view_large",
         "weather_smartspace_view",
         "weather_smartspace_view_large",
+        "smartspace_view",
+        "smartspace_container",
+        "date_view",
+        "keyguard_date_view",
+        "clock_container",
+        "preview_clock",
+        "lockscreen_clock",
         SMARTSPACE_ID,
         "keyguard_slice_view",
         "lock_date"
@@ -52,11 +63,14 @@ internal object PreviewTargetScanner {
         "com.android.keyguard.KeyguardSliceView",
         "com.android.systemui.clocks.",
         "com.google.android.systemui.clocks.",
+        "com.google.android.systemui.keyguard.clocks.",
         "com.android.systemui.shared.clocks.",
         "com.android.systemui.customization.clocks.",
         "com.android.systemui.plugins.clocks.",
+        "com.android.systemui.plugins.keyguard.ui.clocks.",
         "com.google.android.systemui.smartspace.",
-        "com.android.systemui.smartspace."
+        "com.android.systemui.smartspace.",
+        "com.android.systemui.statusbar.policy.DateView"
     )
 
     private val CLOCK_SIZE_PROPERTY_NAMES = listOf(
@@ -215,6 +229,8 @@ internal object PreviewTargetScanner {
 
     fun hideStockView(view: View): Boolean {
         var changed = false
+        if (view.animation != null) view.clearAnimation()
+        view.animate().cancel()
         when (view.visibility) {
             View.VISIBLE -> {
                 hiddenViews[view] = HiddenState(View.VISIBLE, view.alpha.takeIf { it > 0f } ?: 1f)
@@ -405,13 +421,16 @@ internal object PreviewTargetScanner {
     }
 
     private fun isStockClockOrExtraClass(view: View): Boolean {
+        if (view is TextClock) return true
         var cls: Class<*>? = view.javaClass
         while (cls != null && cls != ViewGroup::class.java && cls != View::class.java) {
             val className = cls.name
             if (className.contains("PreviewClockSlot") || className.contains("ClockFaceView")) return false
             if (EXTRA_CLASS_PREFIXES.any { className.startsWith(it) }) return true
             if (className.contains("Clock", ignoreCase = true) ||
-                className.contains("Smartspace", ignoreCase = true)
+                className.contains("Smartspace", ignoreCase = true) ||
+                className.contains("KeyguardSlice", ignoreCase = true) ||
+                className.contains("DateView", ignoreCase = true)
             ) {
                 return true
             }
