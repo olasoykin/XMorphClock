@@ -48,4 +48,15 @@ object SystemUiModule {
         PreviewClockHook.install()
         HookReporter.start()
     }
+
+    @Synchronized
+    fun startPreviewOnly() {
+        if (started) return
+        started = true
+        val module = HookEnv.module
+        ModulePrefs.init(module)
+        FaceImages.init(RemoteImages::load)
+        FaceFont.setUserFonts(RemoteFonts::open)
+        PreviewClockHook.install()
+    }
 }

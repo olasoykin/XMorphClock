@@ -15,17 +15,23 @@ class ObserveAppliedFaceUseCase(
     private val settings: SettingsRepository,
     private val faces: FaceRepository
 ) {
-    operator fun invoke(draft: Flow<Composition?> = flowOf(null)): Flow<ClockFace?> = combine(
-        settings.settings,
-        faces.faces(FaceKind.CLOCK),
-        faces.faces(FaceKind.WEATHER),
-        faces.faces(FaceKind.WIDGET),
-        draft
-    ) { current, clocks, weathers, widgets, pending ->
-        val clock = (clocks.firstOrNull { it.style == current.faceStyle } ?: clocks.firstOrNull())?.face ?: return@combine null
-        val catalog = (weathers + widgets).associate { it.style to it.face }
-        val composition = pending ?: current.composition
-        val used = composition.widgetStyles.mapNotNull { style -> catalog[style]?.let { style to it } }.toMap()
-        FaceComposer.compose(ComposedFaces(clock, used, composition.retain(used.keys)))
+    operator fun invoke(draft: Flow<Composition?> = flowOf(null)): Flow<ClockFace?> {
+        val widgetCatalog = combine(
+            faces.faces(FaceKind.WEATHER),
+            faces.faces(FaceKind.WIDGET)
+        ) { weathers, widgets ->
+            (weathers + widgets).associate { it.style to it.face }
+        }
+        return combine(
+            settings.settings,
+            faces.faces(FaceKind.CLOCK),
+            widgetCatalog,
+            draft
+        ) { current, clocks, catalog, pending ->
+            val clock = (clocks.firstOrNull { it.style == current.faceStyle } ?: clocks.firstOrNull())?.face ?: return@combine null
+            val composition = pending ?: current.composition
+            val used = composition.widgetStyles.mapNotNull { style -> catalog[style]?.let { style to it } }.toMap()
+            FaceComposer.compose(ComposedFaces(clock, used, composition.retain(used.keys)))
+        }
     }
 }

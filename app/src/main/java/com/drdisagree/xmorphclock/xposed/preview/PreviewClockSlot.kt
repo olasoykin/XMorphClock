@@ -12,6 +12,7 @@ import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.engine.ClockFaceView
 import com.drdisagree.xmorphclock.engine.FaceColors
 import com.drdisagree.xmorphclock.xposed.hook.HookEnv
+import com.drdisagree.xmorphclock.xposed.hook.HostApplication
 import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 
 @SuppressLint("ViewConstructor")
@@ -99,11 +100,19 @@ class PreviewClockSlot(
             ?: ClockFaces.faceOf(context, ModulePrefs.faceStyle)
             ?: ClockFaces.presets(context).firstOrNull()
 
-    private fun moduleContext(context: Context): Context? = moduleContext ?: try {
-        context.createPackageContext(BuildConfig.APPLICATION_ID, Context.CONTEXT_IGNORE_SECURITY)
-            .also { moduleContext = it }
-    } catch (throwable: Throwable) {
-        HookEnv.log("Preview module context unavailable", throwable)
-        null
+    private fun moduleContext(context: Context): Context? {
+        moduleContext?.let { return it }
+        val candidates = listOfNotNull(context, context.applicationContext, HostApplication.context())
+        for (candidate in candidates) {
+            val created = runCatching {
+                candidate.createPackageContext(BuildConfig.APPLICATION_ID, Context.CONTEXT_IGNORE_SECURITY)
+            }.getOrNull()
+            if (created != null) {
+                moduleContext = created
+                return created
+            }
+        }
+        HookEnv.log("Preview module context unavailable")
+        return null
     }
 }

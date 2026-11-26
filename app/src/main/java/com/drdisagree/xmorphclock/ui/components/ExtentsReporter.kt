@@ -13,6 +13,11 @@ internal class ExtentsReporter : ViewTreeObserver.OnPreDrawListener {
     private var view: ClockFaceView? = null
     private var observer: ViewTreeObserver? = null
     private var last: Map<String, RectF> = emptyMap()
+    private var lastRevision: Int = Int.MIN_VALUE
+    private var lastWidth: Int = -1
+    private var lastShiftX: Float = Float.NaN
+    private var lastShiftY: Float = Float.NaN
+    private var wasAnimating: Boolean = false
 
     fun attach(target: ClockFaceView) {
         if (view === target) return
@@ -26,13 +31,33 @@ internal class ExtentsReporter : ViewTreeObserver.OnPreDrawListener {
         observer = null
         view = null
         last = emptyMap()
+        lastRevision = Int.MIN_VALUE
+        lastWidth = -1
+        lastShiftX = Float.NaN
+        lastShiftY = Float.NaN
+        wasAnimating = false
     }
 
     override fun onPreDraw(): Boolean {
         val target = view ?: return true
         val listener = onChange ?: return true
         val shift = origin()
+        val rev = target.layoutRevision
+        val w = target.width
+        val animating = target.isLayoutAnimating
+        if (!animating && !wasAnimating && last.isNotEmpty() &&
+            rev == lastRevision && w == lastWidth &&
+            abs(shift.x - lastShiftX) < SHIFT_TOLERANCE &&
+            abs(shift.y - lastShiftY) < SHIFT_TOLERANCE
+        ) {
+            return true
+        }
         val rects = target.layerRects().mapValues { RectF(it.value).apply { offset(shift.x, shift.y) } }
+        lastRevision = rev
+        lastWidth = w
+        lastShiftX = shift.x
+        lastShiftY = shift.y
+        wasAnimating = animating
         if (!same(rects, last)) {
             last = rects
             listener(rects)
@@ -51,5 +76,6 @@ internal class ExtentsReporter : ViewTreeObserver.OnPreDrawListener {
 
     private companion object {
         const val TOLERANCE = 0.5f
+        const val SHIFT_TOLERANCE = 0.1f
     }
 }

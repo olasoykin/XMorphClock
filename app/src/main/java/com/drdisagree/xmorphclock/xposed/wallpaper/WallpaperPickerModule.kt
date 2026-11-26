@@ -5,8 +5,6 @@ import com.drdisagree.xmorphclock.engine.FaceImages
 import com.drdisagree.xmorphclock.xposed.clock.RemoteFonts
 import com.drdisagree.xmorphclock.xposed.clock.RemoteImages
 import com.drdisagree.xmorphclock.xposed.hook.HookEnv
-import com.drdisagree.xmorphclock.xposed.hook.HookSafety
-import com.drdisagree.xmorphclock.xposed.hook.HostApplication
 import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 
 object WallpaperPickerModule {
@@ -24,9 +22,6 @@ object WallpaperPickerModule {
         if (started) return
         started = true
         val module = HookEnv.module
-        if (HookSafety.beginSession(HostApplication.get())) {
-            return
-        }
         ModulePrefs.init(module)
         FaceImages.init(RemoteImages::load)
         FaceFont.setUserFonts(RemoteFonts::open)

@@ -69,6 +69,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -211,17 +213,17 @@ fun HomeScreen(
         if (!state.sheetOpen || state.activeTarget == null) facesExpanded = false
     }
 
-    val morph by animateFloatAsState(
+    val morphAnim = animateFloatAsState(
         if (editing) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "morph"
     )
-    val sheetProgress by animateFloatAsState(
+    val sheetProgressAnim = animateFloatAsState(
         if (sheetOpen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "sheetProgress"
     )
-    val expand by animateFloatAsState(
+    val expandAnim = animateFloatAsState(
         if (facesExpanded && !editing && state.sheetOpen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "expand"
@@ -229,12 +231,16 @@ fun HomeScreen(
 
     val imeBottom = WindowInsets.ime.getBottom(density)
     val lift = with(density) { (imeBottom - navBottom.roundToPx()).coerceAtLeast(0).toDp() }
-    val keyboard by animateFloatAsState(if (imeBottom > 0 && editing) 1f else 0f, tween(KEYBOARD_MS, easing = Emphasized), label = "keyboard")
-    val editSheet = lerp(editorHeight, minOf(editorHeight, KEYBOARD_SHEET), keyboard)
-    val targetFacesHeight = lerp(facesHeight, facesExpandedHeight, expand)
-    val activeSheetHeight = lerp(targetFacesHeight, editSheet, morph)
+    val keyboardAnim = animateFloatAsState(if (imeBottom > 0 && editing) 1f else 0f, tween(KEYBOARD_MS, easing = Emphasized), label = "keyboard")
+    val editSheetHeight = {
+        lerp(editorHeight, minOf(editorHeight, KEYBOARD_SHEET), keyboardAnim.value)
+    }
+    val activeSheetHeight = {
+        val targetFacesHeight = lerp(facesHeight, facesExpandedHeight, expandAnim.value)
+        lerp(targetFacesHeight, editSheetHeight(), morphAnim.value)
+    }
 
-    val reveal by animateFloatAsState(if (state.preview == null) 0f else 1f, tween(320), label = "reveal")
+    val revealAnim = animateFloatAsState(if (state.preview == null) 0f else 1f, tween(320), label = "reveal")
     var playToken by remember { mutableIntStateOf(0) }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     var sheetUp by rememberSaveable { mutableStateOf(false) }
@@ -265,12 +271,12 @@ fun HomeScreen(
     var savingStyle by remember { mutableStateOf<String?>(null) }
     val liveWallpaper by viewModel.liveWallpaper.collectAsStateWithLifecycle()
 
-    val full by animateFloatAsState(
+    val fullAnim = animateFloatAsState(
         if (fullscreen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "full"
     )
-    val open by animateFloatAsState(
+    val openAnim = animateFloatAsState(
         if (sheetUp && fullscreen) 1f else 0f,
         tween(MORPH_MS, easing = Emphasized),
         label = "sheetOpen"
@@ -326,13 +332,15 @@ fun HomeScreen(
     val homeScale = if (previewHeight > 0.dp) {
         ((previewHeight - (SHEET_MARGIN + facesHeight - reservedDock)) / previewHeight).coerceIn(0.25f, fitScale)
     } else fitScale
-    val editScale = if (previewHeight > 0.dp) {
-        ((previewHeight - (SHEET_MARGIN + editSheet + lift - reservedDock)) / previewHeight).coerceIn(0.25f, fitScale)
-    } else fitScale
+    val editScale = {
+        if (previewHeight > 0.dp) {
+            ((previewHeight - (SHEET_MARGIN + editSheetHeight() + lift - reservedDock)) / previewHeight).coerceIn(0.25f, fitScale)
+        } else fitScale
+    }
     val previewScale = {
-        val openScale = homeScale + (editScale - homeScale) * morph
-        val sheetAdjusted = fitScale + (openScale - fitScale) * sheetProgress
-        minOf(sheetAdjusted + (1f - sheetAdjusted) * full, fitScale)
+        val openScale = homeScale + (editScale() - homeScale) * morphAnim.value
+        val sheetAdjusted = fitScale + (openScale - fitScale) * sheetProgressAnim.value
+        minOf(sheetAdjusted + (1f - sheetAdjusted) * fullAnim.value, fitScale)
     }
 
     val styleName = state.clockPreset?.face?.name ?: stringResource(R.string.menu_style_name)
@@ -348,7 +356,7 @@ fun HomeScreen(
                     .fillMaxSize()
                     .statusBarsPadding()
                     .padding(top = 66.dp, bottom = navBottom + MAXIMIZED_DOCK_HEIGHT)
-                    .graphicsLayer { alpha = reveal },
+                    .graphicsLayer { alpha = revealAnim.value },
                 contentAlignment = Alignment.TopCenter
             ) {
                 val available = maxHeight
@@ -464,9 +472,14 @@ fun HomeScreen(
                 }
             }
 
-            if (sheetOpen && morph < 1f && full < 1f && previewHeight > 0.dp && previewWidth > 0.dp) {
+            val showSideModeTabs by remember(previewHeight, previewWidth) {
+                derivedStateOf {
+                    sheetProgressAnim.value > 0.01f && morphAnim.value < 1f && fullAnim.value < 1f && previewHeight > 0.dp && previewWidth > 0.dp
+                }
+            }
+            if (showSideModeTabs) {
                 var barSize by remember { mutableStateOf(IntSize.Zero) }
-                val previewCardWidth = previewHeight * previewScale() * aspect
+                val previewCardWidth = previewHeight * homeScale * aspect
                 val gutter = ((previewWidth - previewCardWidth) / 2f).coerceAtLeast(0.dp)
                 val maxBarWidth = (gutter - MODE_TABS_GAP * 2).coerceIn(MODE_TABS_MIN_WIDTH, MODE_TABS_MAX_WIDTH)
                 if (gutter >= MODE_TABS_MIN_WIDTH + MODE_TABS_GAP) {
@@ -490,7 +503,9 @@ fun HomeScreen(
                             }
                             .onSizeChanged { barSize = it }
                             .width(maxBarWidth)
-                            .graphicsLayer { alpha = reveal * sheetProgress * (1f - morph) * (1f - expand) * (1f - full) }
+                            .graphicsLayer {
+                                alpha = revealAnim.value * sheetProgressAnim.value * (1f - morphAnim.value) * (1f - expandAnim.value) * (1f - fullAnim.value)
+                            }
                     )
                 }
             }
@@ -527,7 +542,8 @@ fun HomeScreen(
                 )
             }
 
-            if (sheetProgress > 0.01f) {
+            val sheetVisible by remember { derivedStateOf { sheetProgressAnim.value > 0.01f } }
+            if (sheetVisible) {
                 Surface(
                     shape = SheetShape,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -537,14 +553,25 @@ fun HomeScreen(
                         .navigationBarsPadding()
                         .padding(start = 12.dp, end = 12.dp, bottom = SHEET_MARGIN)
                         .fillMaxWidth()
-                        .height(activeSheetHeight)
+                        .layout { measurable, constraints ->
+                            val sheetH = activeSheetHeight().roundToPx().coerceIn(0, constraints.maxHeight)
+                            val placeable = measurable.measure(constraints.copy(minHeight = sheetH, maxHeight = sheetH))
+                            layout(placeable.width, placeable.height) {
+                                placeable.place(0, 0)
+                            }
+                        }
                         .offset { IntOffset(0, -lift.roundToPx()) }
                         .graphicsLayer {
-                            alpha = reveal * sheetProgress * (1f - full * (1f - morph))
-                            val closedOffset = (1f - sheetProgress) * (activeSheetHeight + navBottom + SHEET_MARGIN).toPx()
-                            val hidden = full * (activeSheetHeight + navBottom + SHEET_MARGIN).toPx()
-                            val peeking = full * (1f - open) * (activeSheetHeight - SHEET_PEEK + SHEET_MARGIN).toPx().coerceAtLeast(0f)
-                            translationY = closedOffset + hidden + (peeking - hidden) * morph
+                            val progress = sheetProgressAnim.value
+                            val morphVal = morphAnim.value
+                            val fullVal = fullAnim.value
+                            val openVal = openAnim.value
+                            val sheetH = activeSheetHeight()
+                            alpha = revealAnim.value * progress * (1f - fullVal * (1f - morphVal))
+                            val closedOffset = (1f - progress) * (sheetH + navBottom + SHEET_MARGIN).toPx()
+                            val hidden = fullVal * (sheetH + navBottom + SHEET_MARGIN).toPx()
+                            val peeking = fullVal * (1f - openVal) * (sheetH - SHEET_PEEK + SHEET_MARGIN).toPx().coerceAtLeast(0f)
+                            translationY = closedOffset + hidden + (peeking - hidden) * morphVal
                         }
                 ) {
                     AnimatedContent(
@@ -684,11 +711,15 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
         showLarge -> ItemState.LARGE
         else -> ItemState.SMALL
     }
-    val large by animateFloatAsState(if (showLarge) 1f else 0f, spec, label = "large")
-    val sleep by animateFloatAsState(if (state.previewMode == PreviewMode.AOD) 1f else 0f, spec, label = "sleep")
-    val settled = !state.dragging &&
-        large == (if (showLarge) 1f else 0f) &&
-        sleep == (if (state.previewMode == PreviewMode.AOD) 1f else 0f)
+    val largeAnim = animateFloatAsState(if (showLarge) 1f else 0f, spec, label = "large")
+    val sleepAnim = animateFloatAsState(if (state.previewMode == PreviewMode.AOD) 1f else 0f, spec, label = "sleep")
+    val settled by remember(state.dragging, showLarge, state.previewMode) {
+        derivedStateOf {
+            !state.dragging &&
+                largeAnim.value == (if (showLarge) 1f else 0f) &&
+                sleepAnim.value == (if (state.previewMode == PreviewMode.AOD) 1f else 0f)
+        }
+    }
     var extents by remember { mutableStateOf(emptyMap<String, RectF>()) }
     val gridIds = remember(state.gridWidgets) { state.gridWidgets.mapTo(HashSet()) { it.id } }
     val inlineIds = remember(state.inlineWidgets) { state.inlineWidgets.mapTo(HashSet()) { it.id } }
@@ -696,13 +727,13 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
     LockscreenPreview(
         face = state.preview,
         modifier = Modifier.fillMaxSize(),
-        largeProgress = { large },
-        sleepProgress = { sleep },
+        largeProgress = { largeAnim.value },
+        sleepProgress = { sleepAnim.value },
         onExtents = { extents = it },
         animateChanges = !state.dragging,
         overlay = {
             BoxWithConstraints(Modifier.fillMaxSize()) {
-                val frame = geometry.frame(large)
+                val frame = geometry.frame(largeAnim.value)
                 ItemOverlay(
                     extents = extents,
                     composition = state.composition,
@@ -720,6 +751,7 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                     width = constraints.maxWidth.toFloat(),
                     height = constraints.maxHeight.toFloat(),
                     settled = settled,
+                    onGestureStart = viewModel::onGestureStart,
                     onSelectTarget = viewModel::onTargetSelected,
                     onDrag = { deltas, gridDocked, inlineDocked ->
                         viewModel.onTargetsDrag(itemState, deltas, gridDocked, inlineDocked)

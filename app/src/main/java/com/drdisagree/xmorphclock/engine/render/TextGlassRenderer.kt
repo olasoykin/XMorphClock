@@ -68,7 +68,7 @@ internal class TextGlassRenderer {
         const val DISPERSION = "dispersion"
         const val SATURATION = "saturation"
         const val DIM = "dim"
-        const val CACHE_SIZE = 12
+        const val CACHE_SIZE = 24
         const val MAX_REFRACTION_RATIO = 1.5f
         const val MIN_RIM = 1f
         const val MAX_RIM_RATIO = 0.45f

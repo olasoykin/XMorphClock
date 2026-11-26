@@ -98,6 +98,7 @@ class HomeViewModel(
     private val measuredInlineWidths = HashMap<Int, Float>()
     private var screenBottomByState: Map<ItemState, Float> = emptyMap()
     private var screenBottom: Float = DEFAULT_BOTTOM
+    private var lastEditedItemState: ItemState = ItemState.LARGE
 
     init {
         viewModelScope.launch { syncLockscreenShortcuts() }
@@ -189,11 +190,21 @@ class HomeViewModel(
         tab.value = selected
     }
 
+    fun onGestureStart(target: LockTarget) {
+        dragging.value = true
+        onTargetSelected(target = target, slot = null, openSheet = false)
+    }
+
     fun onTargetSelected(
         target: LockTarget?,
         slot: ShortcutSlot? = null,
         openSheet: Boolean = target != null
     ) {
+        if (target != null && activeTarget.value == target && !openSheet) {
+            sheetOpenState.value = false
+            focus.value = null
+            return
+        }
         val openingShortcuts = target == LockTarget.SHORTCUTS && openSheet &&
             (!sheetOpenState.value || activeTarget.value != LockTarget.SHORTCUTS)
         activeTarget.value = target
@@ -272,6 +283,8 @@ class HomeViewModel(
             clockStyle = current.clockStyle,
             clockPlacement = clock?.placement(state),
             clockScale = clock?.scale(state) ?: 1f,
+            clockWidthStretch = clock?.widthStretch(state) ?: 1f,
+            clockHeightStretch = clock?.heightStretch(state) ?: 1f,
             bounds = bounds,
             maxY = maxY
         )
@@ -292,28 +305,39 @@ class HomeViewModel(
 
     private fun rebalanceInlineForMeasuredWidths(itemState: ItemState, snapshotState: HomeUiState) {
         val widthsSnapshot = measuredInlineWidths.toMap()
-        val clockBounds = clockBoundsOf(snapshotState, itemState)
-        val clockBottom = clockBounds?.bottom ?: clockBottomY(snapshotState, itemState)
         val maxY = maxYOf(itemState)
         viewModelScope.launch {
             updateComposition { current ->
                 if (WidgetGrids.inlineItems(current, snapshotState::faceOf).size <= 1) {
                     current
                 } else {
+                    val clockBounds = clockBoundsFor(snapshotState, current, itemState)
+                    val clockBottom = clockBounds?.bottom ?: clockBottomY(snapshotState, itemState)
                     val neededRows = WidgetGrids.minRowsForInline(current, snapshotState::faceOf, widthsSnapshot)
                     val updated = if (neededRows > current.inlineRows) current.copy(inlineRows = neededRows) else current
-                    WidgetGrids.layoutZone(
-                        composition = updated,
-                        zone = WidgetZone.INLINE_1X2,
-                        itemState = itemState,
-                        faceOf = snapshotState::faceOf,
-                        clockBottomY = clockBottom,
-                        maxY = maxY,
-                        centerHorizontally = updated.inlineDocked,
-                        clockBounds = clockBounds,
-                        widgetsAbove = updated.widgetsAbove,
-                        measuredInlineWidths = widthsSnapshot
-                    )
+                    if (!updated.inlineDocked && neededRows <= current.inlineRows) {
+                        WidgetGrids.repackInlineHorizontally(
+                            composition = updated,
+                            itemState = itemState,
+                            faceOf = snapshotState::faceOf,
+                            measuredInlineWidths = widthsSnapshot,
+                            centerHorizontally = false
+                        )
+                    } else {
+                        WidgetGrids.layoutZone(
+                            composition = updated,
+                            zone = WidgetZone.INLINE_1X2,
+                            itemState = itemState,
+                            faceOf = snapshotState::faceOf,
+                            clockBottomY = clockBottom,
+                            maxY = maxY,
+                            centerHorizontally = updated.inlineDocked,
+                            clockBounds = clockBounds,
+                            widgetsAbove = updated.widgetsAbove,
+                            measuredInlineWidths = widthsSnapshot,
+                            preserveExistingSide = true
+                        )
+                    }
                 }
             }
         }
@@ -329,6 +353,7 @@ class HomeViewModel(
         gridDocked: Boolean? = null,
         inlineDocked: Boolean? = null
     ) {
+        lastEditedItemState = itemState
         val state = uiState.value
         val initial = draftComposition.value ?: state.composition
         var current = if (gridDocked != null || inlineDocked != null) {
@@ -360,16 +385,28 @@ class HomeViewModel(
         }
         if (changed) {
             dragging.value = true
+            sheetOpenState.value = false
             draftComposition.value = current
         }
     }
 
     fun onTargetDragEnd() {
         val pending = draftComposition.value
+        val editedState = lastEditedItemState
+        val target = activeTarget.value
         dragging.value = false
         if (pending == null) return
+        val state = uiState.value
+        val synced = WidgetGrids.syncWidgetsAboveFlag(
+            composition = pending,
+            itemState = editedState,
+            faceOf = state::faceOf,
+            clockBounds = clockBoundsFor(state, pending, editedState),
+            preferredTarget = target,
+            measuredInlineWidths = measuredInlineWidths.toMap()
+        )
         viewModelScope.launch {
-            updateComposition { pending }
+            updateComposition { synced }
             draftComposition.value = null
         }
     }
@@ -380,6 +417,7 @@ class HomeViewModel(
         widthStretch: Float,
         heightStretch: Float
     ) {
+        lastEditedItemState = itemState
         val state = uiState.value
         val initial = draftComposition.value ?: state.composition
         val clockItem = initial.clockItem ?: return
@@ -402,10 +440,12 @@ class HomeViewModel(
             )
         }
         dragging.value = true
+        sheetOpenState.value = false
         draftComposition.value = next
     }
 
     fun onGridSizeChange(itemState: ItemState, cols: Int, rows: Int) {
+        lastEditedItemState = itemState
         val state = uiState.value
         val initial = draftComposition.value ?: state.composition
         val minCols = WidgetGrids.minColsForGrid(initial, state::faceOf)
@@ -416,9 +456,18 @@ class HomeViewModel(
         if (nextCols == initial.gridCols && nextRows == initial.gridRows) return
 
         var next = initial.copy(gridCols = nextCols, gridRows = nextRows)
-        val clockBounds = clockBoundsOf(state, itemState)
-        val clockBottom = clockBounds?.bottom ?: clockBottomY(state, itemState)
         val maxY = maxYOf(itemState)
+        val rawClock = clockBoundsFor(state, next, itemState)
+        val (cleared, clockBounds) = WidgetGrids.ensureClockClearanceForWidgets(
+            composition = next,
+            itemState = itemState,
+            faceOf = state::faceOf,
+            clockBounds = rawClock,
+            maxY = maxY,
+            measuredInlineWidths = measuredInlineWidths
+        )
+        next = cleared
+        val clockBottom = clockBounds?.bottom ?: clockBottomY(state, itemState)
         if (WidgetGrids.gridItems(next, state::faceOf).isNotEmpty()) {
             next = WidgetGrids.layoutZone(
                 composition = next,
@@ -430,7 +479,8 @@ class HomeViewModel(
                 centerHorizontally = next.gridDocked,
                 clockBounds = clockBounds,
                 widgetsAbove = next.widgetsAbove,
-                measuredInlineWidths = measuredInlineWidths
+                measuredInlineWidths = measuredInlineWidths,
+                preserveExistingSide = true
             )
             if (WidgetGrids.inlineItems(next, state::faceOf).isNotEmpty() && next.inlineDocked) {
                 next = WidgetGrids.layoutZone(
@@ -443,15 +493,18 @@ class HomeViewModel(
                     centerHorizontally = next.inlineDocked,
                     clockBounds = clockBounds,
                     widgetsAbove = next.widgetsAbove,
-                    measuredInlineWidths = measuredInlineWidths
+                    measuredInlineWidths = measuredInlineWidths,
+                    preserveExistingSide = true
                 )
             }
         }
         dragging.value = true
+        sheetOpenState.value = false
         draftComposition.value = next
     }
 
     fun onInlineRowsChange(itemState: ItemState, rows: Int) {
+        lastEditedItemState = itemState
         val state = uiState.value
         val initial = draftComposition.value ?: state.composition
         val widths = measuredInlineWidths.toMap()
@@ -461,9 +514,18 @@ class HomeViewModel(
         if (nextRows == initial.inlineRows) return
 
         var next = initial.copy(inlineRows = nextRows)
-        val clockBounds = clockBoundsOf(state, itemState)
-        val clockBottom = clockBounds?.bottom ?: clockBottomY(state, itemState)
         val maxY = maxYOf(itemState)
+        val rawClock = clockBoundsFor(state, next, itemState)
+        val (cleared, clockBounds) = WidgetGrids.ensureClockClearanceForWidgets(
+            composition = next,
+            itemState = itemState,
+            faceOf = state::faceOf,
+            clockBounds = rawClock,
+            maxY = maxY,
+            measuredInlineWidths = widths
+        )
+        next = cleared
+        val clockBottom = clockBounds?.bottom ?: clockBottomY(state, itemState)
         if (WidgetGrids.inlineItems(next, state::faceOf).isNotEmpty()) {
             next = WidgetGrids.layoutZone(
                 composition = next,
@@ -475,10 +537,12 @@ class HomeViewModel(
                 centerHorizontally = next.inlineDocked,
                 clockBounds = clockBounds,
                 widgetsAbove = next.widgetsAbove,
-                measuredInlineWidths = widths
+                measuredInlineWidths = widths,
+                preserveExistingSide = true
             )
         }
         dragging.value = true
+        sheetOpenState.value = false
         draftComposition.value = next
     }
 
@@ -491,7 +555,17 @@ class HomeViewModel(
     fun onToggleWidgetsPosition() {
         val state = uiState.value
         val widths = measuredInlineWidths.toMap()
-        val nextAbove = !state.composition.widgetsAbove
+        val activeState = currentItemState(state)
+        val activeClock = clockBoundsFor(state, state.composition, activeState)
+        val currentlyAbove = WidgetGrids.areWidgetsAboveClock(
+            composition = state.composition,
+            itemState = activeState,
+            faceOf = state::faceOf,
+            clockBounds = activeClock,
+            preferredTarget = state.activeTarget,
+            measuredInlineWidths = widths
+        ) ?: state.composition.widgetsAbove
+        val nextAbove = !currentlyAbove
         val largeClock = clockBoundsOf(state, ItemState.LARGE)
         val smallClock = clockBoundsOf(state, ItemState.SMALL)
         val aodLargeClock = clockBoundsOf(state, ItemState.AOD_LARGE)
@@ -644,7 +718,8 @@ class HomeViewModel(
                         centerHorizontally = next.gridDocked,
                         clockBounds = effectiveLargeClock,
                         widgetsAbove = next.widgetsAbove,
-                        measuredInlineWidths = widths
+                        measuredInlineWidths = widths,
+                        preserveExistingSide = true
                     )
                     next = WidgetGrids.layoutZone(
                         composition = next,
@@ -656,7 +731,8 @@ class HomeViewModel(
                         centerHorizontally = next.gridDocked,
                         clockBounds = effectiveSmallClock,
                         widgetsAbove = next.widgetsAbove,
-                        measuredInlineWidths = widths
+                        measuredInlineWidths = widths,
+                        preserveExistingSide = true
                     )
                 }
 
@@ -670,7 +746,8 @@ class HomeViewModel(
                     centerHorizontally = true,
                     clockBounds = effectiveLargeClock,
                     widgetsAbove = next.widgetsAbove,
-                    measuredInlineWidths = widths
+                    measuredInlineWidths = widths,
+                    preserveExistingSide = true
                 )
                 next = WidgetGrids.layoutZone(
                     composition = next,
@@ -682,7 +759,8 @@ class HomeViewModel(
                     centerHorizontally = true,
                     clockBounds = effectiveSmallClock,
                     widgetsAbove = next.widgetsAbove,
-                    measuredInlineWidths = widths
+                    measuredInlineWidths = widths,
+                    preserveExistingSide = true
                 )
                 if (zone == WidgetZone.GRID_1X4 && WidgetGrids.inlineItems(next, state::faceOf).isNotEmpty()) {
                     next = WidgetGrids.layoutZone(
@@ -695,7 +773,8 @@ class HomeViewModel(
                         centerHorizontally = next.inlineDocked,
                         clockBounds = effectiveLargeClock,
                         widgetsAbove = next.widgetsAbove,
-                        measuredInlineWidths = widths
+                        measuredInlineWidths = widths,
+                        preserveExistingSide = true
                     )
                     next = WidgetGrids.layoutZone(
                         composition = next,
@@ -707,7 +786,8 @@ class HomeViewModel(
                         centerHorizontally = next.inlineDocked,
                         clockBounds = effectiveSmallClock,
                         widgetsAbove = next.widgetsAbove,
-                        measuredInlineWidths = widths
+                        measuredInlineWidths = widths,
+                        preserveExistingSide = true
                     )
                 }
                 next
@@ -753,7 +833,8 @@ class HomeViewModel(
                 centerHorizontally = true,
                 clockBounds = largeClock,
                 widgetsAbove = next.widgetsAbove,
-                measuredInlineWidths = widths
+                measuredInlineWidths = widths,
+                preserveExistingSide = true
             )
             next = WidgetGrids.layoutZone(
                 composition = next,
@@ -765,7 +846,8 @@ class HomeViewModel(
                 centerHorizontally = true,
                 clockBounds = smallClock,
                 widgetsAbove = next.widgetsAbove,
-                measuredInlineWidths = widths
+                measuredInlineWidths = widths,
+                preserveExistingSide = true
             )
             next
         }
@@ -817,13 +899,28 @@ class HomeViewModel(
     private fun maxYOf(itemState: ItemState): Float =
         screenBottomByState[itemState] ?: measuredSnapshots[itemState]?.maxY?.takeIf { it > 0f } ?: screenBottom
 
-    private fun clockBoundsOf(state: HomeUiState, itemState: ItemState): ItemBounds? {
-        val clock = state.composition.clockItem ?: return null
+    private fun currentItemState(state: HomeUiState): ItemState = when (state.previewMode) {
+        PreviewMode.LARGE -> ItemState.LARGE
+        PreviewMode.SMALL -> ItemState.SMALL
+        PreviewMode.AOD -> lastEditedItemState.takeIf { it == ItemState.AOD_LARGE || it == ItemState.AOD_SMALL } ?: ItemState.AOD_LARGE
+    }
+
+    private fun clockBoundsOf(state: HomeUiState, itemState: ItemState): ItemBounds? =
+        clockBoundsFor(state, state.composition, itemState)
+
+    private fun clockBoundsFor(
+        state: HomeUiState,
+        composition: Composition,
+        itemState: ItemState
+    ): ItemBounds? {
+        val clock = composition.clockItem ?: return null
         val snapshot = measuredSnapshots[itemState]
         if (snapshot != null &&
             snapshot.clockStyle == state.clockStyle &&
             snapshot.clockPlacement == clock.placement(itemState) &&
-            snapshot.clockScale == clock.scale(itemState)
+            snapshot.clockScale == clock.scale(itemState) &&
+            snapshot.clockWidthStretch == clock.widthStretch(itemState) &&
+            snapshot.clockHeightStretch == clock.heightStretch(itemState)
         ) {
             snapshot.bounds[clock.id]?.let { return it }
         }
@@ -903,6 +1000,8 @@ class HomeViewModel(
         val clockStyle: Int,
         val clockPlacement: FacePlacement?,
         val clockScale: Float,
+        val clockWidthStretch: Float,
+        val clockHeightStretch: Float,
         val bounds: Map<Int, ItemBounds>,
         val maxY: Float
     )

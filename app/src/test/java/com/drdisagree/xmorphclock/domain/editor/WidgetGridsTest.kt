@@ -1004,6 +1004,137 @@ class WidgetGridsTest {
         assertFalse(result.attachedEvent)
     }
 
+    @Test
+    fun layoutZoneTightBelowClockShrinksGapInsteadOfJumpingAboveClock() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+        val clockBounds = ItemBounds(left = 0.1f, top = 0.45f, right = 0.9f, bottom = 1.25f)
+        // Below clock space = (1.58 - 0.02) - 1.25 = 0.31f.
+        // Grid (0.14f) + Inline (0.08f) + standard gaps (0.04*2 = 0.08) = 0.30f; if maxY is slightly tighter (1.51f -> 0.24f avail):
+        // With shrinking gaps (0.016 or 0.004) inline still fits below clock instead of jumping above!
+        val comp = Composition(widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 1.29f), small = null)
+            .add(200, large = FacePlacement(0.5f, 1.46f), small = null)
+
+        val laidOut = WidgetGrids.layoutZone(
+            composition = comp,
+            zone = WidgetZone.INLINE_1X2,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBottomY = clockBounds.bottom,
+            maxY = 1.53f,
+            centerHorizontally = true,
+            clockBounds = clockBounds,
+            widgetsAbove = false
+        )
+
+        val inlineY = WidgetGrids.inlineItems(laidOut) { map[it] }.first().large!!.y
+        assertTrue("Inline should tighten gap and stay below clock instead of jumping above (inlineY=$inlineY)", inlineY >= clockBounds.bottom)
+    }
+
+    @Test
+    fun layoutZoneWithPreserveExistingSideKeepsWidgetsAboveClockDespiteStaleFlag() {
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        val clockBounds = ItemBounds(left = 0.1f, top = 0.45f, right = 0.9f, bottom = 0.85f)
+        // Widget was manually dragged above clock while widgetsAbove is still false
+        val comp = Composition(widgetsAbove = false)
+            .add(100, large = FacePlacement(0.3f, 0.20f), small = null)
+
+        val laidOut = WidgetGrids.layoutZone(
+            composition = comp,
+            zone = WidgetZone.GRID_1X4,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBottomY = clockBounds.bottom,
+            maxY = 1.65f,
+            centerHorizontally = true,
+            clockBounds = clockBounds,
+            widgetsAbove = false,
+            preserveExistingSide = true
+        )
+
+        val gridY = WidgetGrids.gridItems(laidOut) { map[it] }.first().large!!.y
+        assertTrue("preserveExistingSide=true must keep manually dragged widget above clock", gridY < clockBounds.top)
+    }
+
+    @Test
+    fun repackInlineHorizontallyKeepsVerticalPositionIntact() {
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val in2 = face("I2", category = "inline", height = 0.08f)
+        val map = mapOf(200 to in1, 201 to in2)
+        val comp = Composition(widgetsAbove = true)
+            .add(200, large = FacePlacement(0.4f, 0.14f), small = null)
+            .add(201, large = FacePlacement(0.6f, 0.14f), small = null)
+
+        val widths = mapOf(
+            comp.items[1].id to 0.25f,
+            comp.items[2].id to 0.35f
+        )
+
+        val repacked = WidgetGrids.repackInlineHorizontally(
+            composition = comp,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            measuredInlineWidths = widths,
+            centerHorizontally = true
+        )
+
+        val placements = WidgetGrids.inlineItems(repacked) { map[it] }.map { it.large!! }
+        assertEquals(0.14f, placements[0].y, 1e-4f)
+        assertEquals(0.14f, placements[1].y, 1e-4f)
+        assertEquals(0.25f / 2f + 0.35f / 2f + WidgetGrids.INLINE_ITEM_GAP, placements[1].x - placements[0].x, 1e-4f)
+    }
+
+    @Test
+    fun areWidgetsAboveClockAndSyncWidgetsAboveFlagDetectSpatialSideAccurately() {
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        val clockBounds = ItemBounds(left = 0.1f, top = 0.40f, right = 0.9f, bottom = 0.80f)
+
+        // Stale flag says false, but widget was dragged above clock
+        val compAbove = Composition(widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 0.15f), small = null)
+        assertEquals(
+            true,
+            WidgetGrids.areWidgetsAboveClock(compAbove, ItemState.LARGE, { map[it] }, clockBounds)
+        )
+        val syncedAbove = WidgetGrids.syncWidgetsAboveFlag(compAbove, ItemState.LARGE, { map[it] }, clockBounds)
+        assertTrue(syncedAbove.widgetsAbove)
+
+        // Stale flag says true, but widget was dragged below clock
+        val compBelow = Composition(widgetsAbove = true)
+            .add(100, large = FacePlacement(0.5f, 0.95f), small = null)
+        assertEquals(
+            false,
+            WidgetGrids.areWidgetsAboveClock(compBelow, ItemState.LARGE, { map[it] }, clockBounds)
+        )
+        val syncedBelow = WidgetGrids.syncWidgetsAboveFlag(compBelow, ItemState.LARGE, { map[it] }, clockBounds)
+        assertFalse(syncedBelow.widgetsAbove)
+    }
+
+    @Test
+    fun areWidgetsAboveClockPrioritizesPreferredTarget() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+        val clockBounds = ItemBounds(left = 0.1f, top = 0.45f, right = 0.9f, bottom = 0.75f)
+
+        val comp = Composition()
+            .add(100, large = FacePlacement(0.5f, 0.15f), small = null) // above clock
+            .add(200, large = FacePlacement(0.5f, 0.95f), small = null) // below clock
+
+        assertEquals(
+            true,
+            WidgetGrids.areWidgetsAboveClock(comp, ItemState.LARGE, { map[it] }, clockBounds, preferredTarget = LockTarget.WIDGET_GRID)
+        )
+        assertEquals(
+            false,
+            WidgetGrids.areWidgetsAboveClock(comp, ItemState.LARGE, { map[it] }, clockBounds, preferredTarget = LockTarget.INLINE_GRID)
+        )
+    }
+
     private fun boundsOverlap(a: ItemBounds, b: ItemBounds): Boolean =
         a.left < b.right - 1e-4f && a.right > b.left + 1e-4f && a.top < b.bottom - 1e-4f && a.bottom > b.top + 1e-4f
 

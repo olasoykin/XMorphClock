@@ -51,8 +51,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -113,6 +115,7 @@ fun BoxScope.ItemOverlay(
     width: Float,
     height: Float,
     settled: Boolean = true,
+    onGestureStart: (LockTarget) -> Unit = {},
     onSelectTarget: (LockTarget?, ShortcutSlot?, Boolean) -> Unit,
     onDrag: (Map<LockTarget, Pair<Float, Float>>, Boolean, Boolean) -> Unit,
     onClockTransform: (ItemState, Float, Float, Float) -> Unit,
@@ -158,19 +161,49 @@ fun BoxScope.ItemOverlay(
         )
     }
 
-    val clockLayers = extents.filterKeys { FaceComposer.isClockLayer(it) }
-    val gridLayers = extents.filterKeys { FaceComposer.itemOf(it) in gridWidgetIds }
-    val inlineLayers = extents.filterKeys { FaceComposer.itemOf(it) in inlineWidgetIds }
-
-    val itemBounds = remember(extents, composition, unit, frameLeft, frameTop) {
-        if (unit <= 0f) emptyMap()
-        else composition.items.mapNotNull { item ->
-            val layers = extents.filterKeys { id ->
-                if (item.clock) FaceComposer.isClockLayer(id) else FaceComposer.itemOf(id) == item.id
+    val clockItemId = composition.clockItem?.id
+    val partitioned = remember(extents, gridWidgetIds, inlineWidgetIds, clockItemId, unit, frameLeft, frameTop) {
+        var clockUnion: RectF? = null
+        var gridUnion: RectF? = null
+        var inlineUnion: RectF? = null
+        val perItemRaw = if (unit > 0f) HashMap<Int, RectF>() else null
+        extents.forEach { (id, rect) ->
+            if (FaceComposer.isClockLayer(id)) {
+                val cur = clockUnion
+                if (cur == null) clockUnion = RectF(rect) else cur.union(rect)
+            } else {
+                val itemId = FaceComposer.itemOf(id)
+                if (itemId != null) {
+                    if (itemId in gridWidgetIds) {
+                        val cur = gridUnion
+                        if (cur == null) gridUnion = RectF(rect) else cur.union(rect)
+                    }
+                    if (itemId in inlineWidgetIds) {
+                        val cur = inlineUnion
+                        if (cur == null) inlineUnion = RectF(rect) else cur.union(rect)
+                    }
+                    if (perItemRaw != null) {
+                        val curItem = perItemRaw[itemId]
+                        if (curItem == null) perItemRaw[itemId] = RectF(rect) else curItem.union(rect)
+                    }
+                }
             }
-            layers.values.union()?.toBounds(frameLeft, frameTop, unit)?.let { item.id to it }
-        }.toMap()
+        }
+        val boundsById = if (unit <= 0f || perItemRaw == null) {
+            emptyMap()
+        } else {
+            val out = HashMap<Int, ItemBounds>(perItemRaw.size + 1)
+            if (clockItemId != null && clockUnion != null) {
+                out[clockItemId] = clockUnion.toBounds(frameLeft, frameTop, unit)
+            }
+            perItemRaw.forEach { (itemId, rect) ->
+                out[itemId] = rect.toBounds(frameLeft, frameTop, unit)
+            }
+            out
+        }
+        PartitionedExtents(clockUnion, gridUnion, inlineUnion, boundsById)
     }
+    val itemBounds = partitioned.itemBounds
     val shortcutRowTop = minOf(
         leftShortcutRect?.top ?: height,
         rightShortcutRect?.top ?: height
@@ -208,9 +241,9 @@ fun BoxScope.ItemOverlay(
         }
     }
 
-    val clockRaw = clockLayers.values.union()
-    val gridRaw = gridLayers.values.union()
-    val inlineRaw = inlineLayers.values.union()
+    val clockRaw = partitioned.clockRaw
+    val gridRaw = partitioned.gridRaw
+    val inlineRaw = partitioned.inlineRaw
 
     val clockRect = clockRaw?.padded(pad)
     val gridRect = gridRaw?.padded(pad)
@@ -281,11 +314,20 @@ fun BoxScope.ItemOverlay(
         }
     }
 
+    val detectedPlaceholdersAbove = remember(clockRect, gridRect, inlineRect, composition.widgetsAbove) {
+        val ref = gridRect ?: inlineRect
+        if (ref != null && clockRect != null) {
+            ref.centerY() < clockRect.centerY()
+        } else {
+            composition.widgetsAbove
+        }
+    }
+
     val placeholders = remember(
         clockRect,
         gridRect,
         inlineRect,
-        composition.widgetsAbove,
+        detectedPlaceholdersAbove,
         width,
         height,
         unit,
@@ -302,7 +344,7 @@ fun BoxScope.ItemOverlay(
             clockRect = clockRect,
             gridRect = gridRect,
             inlineRect = inlineRect,
-            widgetsAbove = composition.widgetsAbove,
+            widgetsAbove = detectedPlaceholdersAbove,
             width = width,
             height = height,
             unit = unit,
@@ -371,6 +413,7 @@ fun BoxScope.ItemOverlay(
     val currentHeight by rememberUpdatedState(height)
     val currentSafeBottom by rememberUpdatedState(safeBottomPx)
     val currentSelect by rememberUpdatedState(onSelectTarget)
+    val currentGestureStart by rememberUpdatedState(onGestureStart)
     val currentDrag by rememberUpdatedState(onDrag)
     val currentClockTransform by rememberUpdatedState(onClockTransform)
     val currentGridSizeChange by rememberUpdatedState(onGridSizeChange)
@@ -447,9 +490,24 @@ fun BoxScope.ItemOverlay(
         return null
     }
 
+    var overlayCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    fun PointerInputChange.screenPosition(): Offset {
+        val coords = overlayCoords
+        return if (coords != null && coords.isAttached) coords.localToRoot(position) else position
+    }
+
+    fun currentOverlayScale(): Float {
+        val coords = overlayCoords?.takeIf { it.isAttached } ?: return 1f
+        val p0 = coords.localToRoot(Offset.Zero)
+        val p1 = coords.localToRoot(Offset(100f, 0f))
+        return ((p1.x - p0.x) / 100f).takeIf { it.isFinite() && it > 0.05f } ?: 1f
+    }
+
     Box(
         Modifier
             .matchParentSize()
+            .onGloballyPositioned { overlayCoords = it }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -483,36 +541,44 @@ fun BoxScope.ItemOverlay(
                     liveGridDocked = currentComposition.gridDocked
                     liveInlineDocked = currentComposition.inlineDocked
 
+                    var activePointerId = down.id
+                    var prevScreenPos = down.screenPosition()
                     var totalPx = Offset.Zero
                     var appliedDeltas = startBoundsByGroup.keys.associateWith { 0f to 0f }
                     var movedBeyondSlop = false
                     var dragging = false
                     var resizing = false
+                    var finishedCleanly = false
                     val slop = viewConfiguration.touchSlop
 
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pressed = event.changes.filter { it.pressed }
-                        if (pressed.isEmpty()) break
-                        val change = pressed.first()
-                        totalPx += change.positionChange()
-                        if (!movedBeyondSlop && totalPx.getDistance() > slop) {
-                            movedBeyondSlop = true
-                            if (resizeHit != null && resizeStartRect != null) {
-                                resizing = true
-                                activeResizing = true
-                                activeResizeHandle = resizeHit.second
-                                if (currentActive != resizeHit.first) {
-                                    currentSelect(resizeHit.first, null, false)
-                                }
-                            } else if (hit != null && hit != LockTarget.SHORTCUTS && startBounds != null) {
-                                dragging = true
-                                activeDragging = true
-                                if (currentActive != hit) {
-                                    currentSelect(hit, null, false)
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+                            val change = pressed.firstOrNull { it.id == activePointerId } ?: pressed.first()
+                            val currScreenPos = change.screenPosition()
+                            if (change.id != activePointerId) {
+                                activePointerId = change.id
+                                prevScreenPos = currScreenPos
+                            } else {
+                                val stepScreen = currScreenPos - prevScreenPos
+                                prevScreenPos = currScreenPos
+                                totalPx += stepScreen / currentOverlayScale()
+                            }
+                            if (!movedBeyondSlop && totalPx.getDistance() > slop) {
+                                movedBeyondSlop = true
+                                if (resizeHit != null && resizeStartRect != null) {
+                                    resizing = true
+                                    activeResizing = true
+                                    activeResizeHandle = resizeHit.second
+                                    currentGestureStart(resizeHit.first)
+                                } else if (hit != null && hit != LockTarget.SHORTCUTS && startBounds != null) {
+                                    dragging = true
+                                    activeDragging = true
+                                    currentGestureStart(hit)
                                 }
                             }
-                        }
 
                         if (resizing && resizeHit != null && resizeStartRect != null) {
                             change.consume()
@@ -669,10 +735,19 @@ fun BoxScope.ItemOverlay(
                                 }
                             }
                         }
-                        val dockedChanged = liveGridDocked != prevGridDocked || liveInlineDocked != prevInlineDocked
-                        appliedDeltas = stickyResult.deltas
-                        if (steps.isNotEmpty() || dockedChanged) {
-                            currentDrag(steps, liveGridDocked, liveInlineDocked)
+                            val dockedChanged = liveGridDocked != prevGridDocked || liveInlineDocked != prevInlineDocked
+                            appliedDeltas = stickyResult.deltas
+                            if (steps.isNotEmpty() || dockedChanged) {
+                                currentDrag(steps, liveGridDocked, liveInlineDocked)
+                            }
+                        }
+                        finishedCleanly = true
+                    } finally {
+                        if (!finishedCleanly && (resizing || dragging)) {
+                            activeResizing = false
+                            activeResizeHandle = null
+                            activeDragging = false
+                            currentDragEnd()
                         }
                     }
 
@@ -795,27 +870,51 @@ fun BoxScope.ItemOverlay(
             LockTarget.WIDGET_GRID -> displayGridRect ?: gridPlaceholder ?: bottomMostWidgetRect
             LockTarget.INLINE_GRID -> displayInlineRect ?: inlinePlaceholder ?: bottomMostWidgetRect
         }
+        val activeRealRect = when (activeTarget) {
+            LockTarget.WIDGET_GRID -> displayGridRect
+            LockTarget.INLINE_GRID -> displayInlineRect
+        }
+        val referenceRect = activeRealRect ?: displayGridRect ?: displayInlineRect ?: activeWidgetRect
+        val actuallyWidgetsAbove = if (clockRect != null) {
+            referenceRect.centerY() < clockRect.centerY()
+        } else {
+            composition.widgetsAbove
+        }
         val cx = ((activeWidgetRect.left + activeWidgetRect.right) / 2f)
             .coerceIn(edgePadPx + btnRadius, (width - edgePadPx - btnRadius).coerceAtLeast(edgePadPx + btnRadius))
         val minBtnY = edgePadPx + btnRadius
         val maxBtnY = (safeBottomPx - btnRadius - with(density) { 4.dp.toPx() }).coerceAtLeast(minBtnY)
 
+        val aboveBlockBottom = if (clockRect != null) {
+            listOfNotNull(displayGridRect ?: gridPlaceholder, displayInlineRect ?: inlinePlaceholder)
+                .filter { it.centerY() < clockRect.centerY() }
+                .maxOfOrNull { it.bottom }
+        } else {
+            null
+        }
         val toggleObstacles = listOfNotNull(clockRect, displayGridRect, displayInlineRect, gridPlaceholder, inlinePlaceholder)
         val candidateYs = buildList {
-            if (composition.widgetsAbove) {
-                if (clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
-                    add((bottomMostWidgetRect.bottom + clockRect.top) / 2f)
+            if (actuallyWidgetsAbove) {
+                if (clockRect != null && clockRect.top > activeWidgetRect.bottom) {
+                    add((activeWidgetRect.bottom + clockRect.top) / 2f)
                 }
-                add(topMostWidgetRect.top - btnGap - btnRadius)
-                add(bottomMostWidgetRect.bottom + btnGap + btnRadius)
-            } else {
-                add(bottomMostWidgetRect.bottom + btnGap + btnRadius)
+                if (clockRect != null && aboveBlockBottom != null && clockRect.top > aboveBlockBottom) {
+                    add((aboveBlockBottom + clockRect.top) / 2f)
+                }
                 add(activeWidgetRect.bottom + btnGap + btnRadius)
+                add(activeWidgetRect.top - btnGap - btnRadius)
                 add(topMostWidgetRect.top - btnGap - btnRadius)
+            } else {
+                add(activeWidgetRect.bottom + btnGap + btnRadius)
+                add(bottomMostWidgetRect.bottom + btnGap + btnRadius)
+                if (clockRect != null && activeWidgetRect.top > clockRect.bottom) {
+                    add((clockRect.bottom + activeWidgetRect.top) / 2f)
+                }
                 if (clockRect != null && topMostWidgetRect.top > clockRect.bottom) {
                     add((clockRect.bottom + topMostWidgetRect.top) / 2f)
                 }
                 add(activeWidgetRect.top - btnGap - btnRadius)
+                add(topMostWidgetRect.top - btnGap - btnRadius)
             }
         }
         val validCy = candidateYs.firstOrNull { cy ->
@@ -826,14 +925,16 @@ fun BoxScope.ItemOverlay(
                     cy - btnRadius < obs.bottom - 1f
             }
         }
-        val fallbackCy = if (composition.widgetsAbove && clockRect != null && clockRect.top > bottomMostWidgetRect.bottom) {
-            (bottomMostWidgetRect.bottom + clockRect.top) / 2f
+        val fallbackCy = if (actuallyWidgetsAbove && clockRect != null && clockRect.top > activeWidgetRect.bottom) {
+            (activeWidgetRect.bottom + clockRect.top) / 2f
+        } else if (actuallyWidgetsAbove && clockRect != null && aboveBlockBottom != null && clockRect.top > aboveBlockBottom) {
+            (aboveBlockBottom + clockRect.top) / 2f
         } else {
-            bottomMostWidgetRect.bottom + btnGap + btnRadius
+            activeWidgetRect.bottom + btnGap + btnRadius
         }.coerceIn(minBtnY, maxBtnY)
 
         GridPositionToggleButton(
-            widgetsAbove = composition.widgetsAbove,
+            widgetsAbove = actuallyWidgetsAbove,
             centerX = cx,
             centerY = validCy ?: fallbackCy,
             onToggle = currentToggleWidgetsPosition
@@ -1001,6 +1102,11 @@ private fun SelectionZoneFrame(
     )
     val fillAlpha by animateFloatAsState(if (selected) 0.06f else 0f, tween(180), label = "zoneFill")
 
+    val dash = remember(density) {
+        with(density) { PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx())) }
+    }
+    val cornerPaths = remember { Array(4) { Path() } }
+
     Canvas(
         Modifier
             .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
@@ -1029,7 +1135,6 @@ private fun SelectionZoneFrame(
         )
 
         if (columns > 1 || rows > 1) {
-            val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
             for (c in 1 until columns) {
                 val gx = size.width * c / columns
                 drawLine(
@@ -1064,25 +1169,29 @@ private fun SelectionZoneFrame(
             fun cornerColor(handle: ResizeHandle): Color =
                 if (activeHandle == handle) primaryColor else frameColor
 
-            val tl = Path().apply {
+            val tl = cornerPaths[0].apply {
+                rewind()
                 moveTo(0f, corner + arm)
                 lineTo(0f, corner)
                 arcTo(Rect(0f, 0f, c2, c2), 180f, 90f, false)
                 lineTo(corner + arm, 0f)
             }
-            val tr = Path().apply {
+            val tr = cornerPaths[1].apply {
+                rewind()
                 moveTo(size.width - corner - arm, 0f)
                 lineTo(size.width - corner, 0f)
                 arcTo(Rect(size.width - c2, 0f, size.width, c2), -90f, 90f, false)
                 lineTo(size.width, corner + arm)
             }
-            val br = Path().apply {
+            val br = cornerPaths[2].apply {
+                rewind()
                 moveTo(size.width, size.height - corner - arm)
                 lineTo(size.width, size.height - corner)
                 arcTo(Rect(size.width - c2, size.height - c2, size.width, size.height), 0f, 90f, false)
                 lineTo(size.width - corner - arm, size.height)
             }
-            val bl = Path().apply {
+            val bl = cornerPaths[3].apply {
+                rewind()
                 moveTo(corner + arm, size.height)
                 lineTo(corner, size.height)
                 arcTo(Rect(0f, size.height - c2, c2, size.height), 90f, 90f, false)
@@ -1175,6 +1284,13 @@ private fun SmartCenterGuides(
     }
 }
 
+private data class PartitionedExtents(
+    val clockRaw: RectF?,
+    val gridRaw: RectF?,
+    val inlineRaw: RectF?,
+    val itemBounds: Map<Int, ItemBounds>
+)
+
 private fun distinctRowCount(bounds: List<ItemBounds>): Int {
     if (bounds.isEmpty()) return 1
     val tops = bounds.map { it.top }.sorted()
@@ -1187,11 +1303,6 @@ private fun distinctRowCount(bounds: List<ItemBounds>): Int {
         }
     }
     return rows
-}
-
-private fun Collection<RectF>.union(): RectF? {
-    if (isEmpty()) return null
-    return RectF(minOf { it.left }, minOf { it.top }, maxOf { it.right }, maxOf { it.bottom })
 }
 
 private fun RectF.padded(pad: Float): RectF =

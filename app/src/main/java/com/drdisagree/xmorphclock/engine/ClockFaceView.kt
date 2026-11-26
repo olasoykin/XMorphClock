@@ -94,7 +94,7 @@ class ClockFaceView(
     var face: ClockFace = face
         set(value) {
             if (field == value) return
-            val typography = field.layers != value.layers
+            val layersChanged = field.layers != value.layers
             if (instantFace || !morphOnChange) {
                 morphFrom = null
             } else {
@@ -102,8 +102,8 @@ class ClockFaceView(
                 morphStart = SystemClock.uptimeMillis()
             }
             field = value
-            if (!instantFace || typography) FaceFont.prewarm(value)
-            refreshFace()
+            if (layersChanged) FaceFont.prewarm(value)
+            refreshFace(layersChanged)
         }
 
     private var instantFace = false
@@ -116,12 +116,16 @@ class ClockFaceView(
         instantFace = false
     }
 
-    private fun refreshFace() {
-        metrics.clear()
-        invalidateFrames()
-        texts.clear()
-        updateTime()
-        syncIdle()
+    private fun refreshFace(layersChanged: Boolean = true) {
+        if (layersChanged || texts.size != face.layers.size) {
+            metrics.clear()
+            invalidateFrames()
+            texts.clear()
+            updateTime()
+            syncIdle()
+        } else {
+            invalidateFrames()
+        }
         requestLayout()
         invalidate()
     }
@@ -154,6 +158,7 @@ class ClockFaceView(
     var colorOf: (String) -> Int = { FaceColors.resolve(context, it) }
         set(value) {
             field = value
+            inkCache.clear()
             invalidateFrames()
             invalidate()
         }
@@ -271,6 +276,19 @@ class ClockFaceView(
     private val changeStarts = HashMap<Int, LongArray>()
 
     private val metrics = HashMap<MetricsKey, LayerMetrics>()
+    private val inkCache = LinkedHashMap<InkKey, Shader>(MAX_INK_CACHE, 0.75f, true)
+    @Volatile
+    internal var layoutRevision: Int = 0
+        private set
+
+    internal val isLayoutAnimating: Boolean
+        get() {
+            if (morphFrom != null) return true
+            if (idleFades.isEmpty()) return false
+            val now = SystemClock.uptimeMillis()
+            return idleFades.values.any { it.value(now) != it.target }
+        }
+
     private var framesWidth = 0f
     private var framesPalette = -1
     private var smallFrames: Map<String, Placement>? = null
@@ -305,6 +323,7 @@ class ClockFaceView(
         val value = progress.coerceIn(0f, 1f)
         if (value == largeProgress) return
         largeProgress = value
+        layoutRevision++
         requestLayout()
         invalidate()
     }
@@ -324,7 +343,10 @@ class ClockFaceView(
         val value = progress.coerceIn(0f, 1f)
         if (value == aodProgress) return
         aodProgress = value
-        if (face.aodLarge != null || face.aodSmall != null) requestLayout()
+        if (face.aodLarge != null || face.aodSmall != null) {
+            layoutRevision++
+            requestLayout()
+        }
         invalidate()
     }
 
@@ -388,29 +410,32 @@ class ClockFaceView(
 
         if (relayout) requestLayout()
         invalidate()
-        describe(calendar)
+        if (isAttachedToWindow && importantForAccessibility != IMPORTANT_FOR_ACCESSIBILITY_NO) {
+            describe(calendar)
+        }
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        ContextCompat.registerReceiver(
-            context,
-            timeReceiver,
-            IntentFilter().apply {
-                addAction(Intent.ACTION_TIME_TICK)
-                addAction(Intent.ACTION_TIME_CHANGED)
-                addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            },
-            ContextCompat.RECEIVER_EXPORTED
-        )
+        val receiverContext = context.applicationContext ?: context
+        runCatching {
+            ContextCompat.registerReceiver(
+                receiverContext,
+                timeReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_TIME_TICK)
+                    addAction(Intent.ACTION_TIME_CHANGED)
+                    addAction(Intent.ACTION_TIMEZONE_CHANGED)
+                },
+                ContextCompat.RECEIVER_EXPORTED
+            )
+        }
         updateTime()
     }
 
     override fun onDetachedFromWindow() {
-        try {
-            context.unregisterReceiver(timeReceiver)
-        } catch (_: IllegalArgumentException) {
-        }
+        val receiverContext = context.applicationContext ?: context
+        runCatching { receiverContext.unregisterReceiver(timeReceiver) }
         super.onDetachedFromWindow()
     }
 
@@ -457,10 +482,16 @@ class ClockFaceView(
         return bottom
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw || h != oldh) layoutRevision++
+    }
+
     private fun syncIdle() {
         val idle = face.layers.filter { it.hideIdle && FaceValues.isIdle(it, data) }.mapTo(HashSet()) { groupOf(it.id) }
         if (idle == idleGroups) return
         idleGroups = idle
+        layoutRevision++
         val now = SystemClock.uptimeMillis()
         face.layers.mapTo(HashSet()) { groupOf(it.id) }.forEach { group ->
             val target = if (group in idle) 0f else 1f
@@ -687,6 +718,7 @@ class ClockFaceView(
         if (morphFrom != null) {
             if (SystemClock.uptimeMillis() - morphStart >= MORPH_DURATION) {
                 morphFrom = null
+                layoutRevision++
             }
             requestLayout()
             animating = true
@@ -1030,6 +1062,9 @@ class ClockFaceView(
     private fun inkOf(value: String?, widthRatio: Float, capRatio: Float, sleepColor: Int?): Shader? {
         if (aodProgress >= 1f) return null
         val gradient = FaceGradient.parse(value) ?: return null
+        val dimStep = (aodProgress * DIM_STEPS).roundToInt()
+        val key = InkKey(value.orEmpty(), widthRatio, capRatio, sleepColor, dimStep, FaceColors.paletteVersion)
+        inkCache[key]?.let { return it }
         val width = widthRatio * BASE_SIZE
         val height = capRatio * BASE_SIZE
         val radians = Math.toRadians(gradient.angle.toDouble())
@@ -1042,7 +1077,10 @@ class ClockFaceView(
             val base = colorOf(gradient.stops[stop])
             if (sleepColor == null) base else ColorUtils.blendARGB(base, sleepColor, aodProgress)
         }
-        return LinearGradient(centerX - dx * half, centerY - dy * half, centerX + dx * half, centerY + dy * half, colors, null, Shader.TileMode.CLAMP)
+        val shader = LinearGradient(centerX - dx * half, centerY - dy * half, centerX + dx * half, centerY + dy * half, colors, null, Shader.TileMode.CLAMP)
+        if (inkCache.size >= MAX_INK_CACHE) inkCache.remove(inkCache.keys.first())
+        inkCache[key] = shader
+        return shader
     }
 
     private fun inked(target: Paint, color: Int, alpha: Int, dx: Float = 0f, dy: Float = 0f) {
@@ -2050,6 +2088,7 @@ class ClockFaceView(
     }
 
     private fun invalidateFrames() {
+        layoutRevision++
         smallFrames = null
         largeFrames = null
         aodSmallFrames = null
@@ -2341,8 +2380,11 @@ class ClockFaceView(
         return text.substring(0, low).trimEnd() + ELLIPSIS
     }
 
-    private fun metricsOf(index: Int, widthAxis: Int, heightAxis: Int, tracking: Float, weight: Int): LayerMetrics =
-        metrics.getOrPut(MetricsKey(index, widthAxis, heightAxis, tracking, weight)) {
+    private fun metricsOf(index: Int, widthAxis: Int, heightAxis: Int, tracking: Float, weight: Int): LayerMetrics {
+        val key = MetricsKey(index, widthAxis, heightAxis, tracking, weight)
+        metrics[key]?.let { return it }
+        if (metrics.size >= MAX_METRICS_CACHE) metrics.clear()
+        return metrics.getOrPut(key) {
             val layer = face.layers[index]
             if (layer.isHand) return@getOrPut LayerMetrics(1f, floatArrayOf(1f), 1f)
             if (layer.isShape && !layer.isHand) return@getOrPut LayerMetrics(1f / layer.aspect.coerceAtLeast(MIN_ASPECT), floatArrayOf(1f), 1f)
@@ -2369,6 +2411,7 @@ class ClockFaceView(
             }
             LayerMetrics(capRatio, advances, advances.sum(), drop)
         }
+    }
 
     private fun lerp(from: Float, to: Float, fraction: Float): Float = from + (to - from) * fraction
 
@@ -2460,9 +2503,20 @@ class ClockFaceView(
         private const val TRANSITION_FADE_BAND = 0.024f
         private const val TRANSITION_TOP_OVERSHOOT = 0.01f
         private const val TRANSITION_GUARD_END = 0.18f
+        private const val MAX_INK_CACHE = 32
+        private const val MAX_METRICS_CACHE = 128
         private const val STAGGER_SPAN = 0.58f
         private const val STAGGER_DELAY = 0.42f
     }
+
+    private data class InkKey(
+        val value: String,
+        val widthRatio: Float,
+        val capRatio: Float,
+        val sleepColor: Int?,
+        val dimStep: Int,
+        val paletteVersion: Int
+    )
 
     private data class TransitionFrames(
         val awake: Map<String, Placement>,
