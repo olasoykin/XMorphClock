@@ -122,6 +122,8 @@ class ClockSectionAdapter : ClockAdapter {
             slot.id = main.id
             slot.visibility = main.visibility
             views.forEach { (it.parent as? ViewGroup)?.removeView(it) }
+            if (parent.clipChildren) parent.clipChildren = false
+            if (parent.clipToPadding) parent.clipToPadding = false
             if (params != null) {
                 parent.addView(slot, index.coerceIn(0, parent.childCount), params)
             } else {
@@ -180,6 +182,14 @@ class ClockSectionAdapter : ClockAdapter {
     @SuppressLint("DiscouragedApi")
     private fun enforce(host: ClockHost, root: ViewGroup): Boolean {
         var changed = false
+        if (root.clipChildren) {
+            root.clipChildren = false
+            changed = true
+        }
+        if (root.clipToPadding) {
+            root.clipToPadding = false
+            changed = true
+        }
         listOf(false, true).forEach { large ->
             val index = slotIndex(large)
             val id = clockIds[index].takeIf { it != View.NO_ID }

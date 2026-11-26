@@ -52,6 +52,8 @@ class RemotePrefsProvider : ContentProvider() {
     private fun enforceCaller() {
         if (Binder.getCallingUid() == Process.myUid()) return
         if (callingPackage in SCOPE) return
+        val uidPackages = context?.packageManager?.getPackagesForUid(Binder.getCallingUid())
+        if (uidPackages != null && uidPackages.any { it in SCOPE }) return
         throw SecurityException("Caller not in module scope")
     }
 
@@ -69,22 +71,40 @@ class RemotePrefsProvider : ContentProvider() {
         return true
     }
 
-    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = null
+    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+        enforceCaller()
+        return null
+    }
 
-    override fun getType(uri: Uri): String? = null
+    override fun getType(uri: Uri): String? {
+        enforceCaller()
+        return null
+    }
 
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        enforceCaller()
+        return null
+    }
 
-    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+        enforceCaller()
+        return 0
+    }
 
-    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
+    override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int {
+        enforceCaller()
+        return 0
+    }
 
     private companion object {
         val SCOPE = setOf(
             ReportContract.SYSTEMUI_PACKAGE,
             "com.android.wallpaper",
             "com.google.android.apps.wallpaper",
-            "com.google.android.apps.wallpaper.pixel"
+            "com.google.android.apps.wallpaper.pixel",
+            "com.android.customization",
+            "com.google.android.apps.customization.pixel",
+            "com.android.wallpaper.livepicker"
         )
         const val READ_ONLY = "r"
     }

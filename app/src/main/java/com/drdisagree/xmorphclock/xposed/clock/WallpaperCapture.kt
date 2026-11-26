@@ -226,22 +226,24 @@ internal object WallpaperCapture {
         mainHandler.post { scaleListeners.forEach { it() } }
     }
 
+    private val cachedMaxScale: Float by lazy { computeMaxScale() }
+
     private fun updateScale(engine: Any) {
         if (backdrop) return
         updateDim(engine)
         val zoom = ((engine.callMethod(GET_ZOOM) as? Float) ?: 0f).coerceIn(0f, 1f)
         val zoomsOut = (engine.callMethod(ZOOMS_OUT) as? Boolean) ?: true
-        val next = if (zoomsOut) 1f + (maxScale() - 1f) * (1f - zoom) else 1f
+        val next = if (zoomsOut) 1f + (cachedMaxScale - 1f) * (1f - zoom) else 1f
         if (next == engineScale) return
         engineScale = next
         mainHandler.post { scaleListeners.forEach { it() } }
     }
 
     private fun restScale(engine: Any): Float =
-        if ((engine.callMethod(ZOOMS_OUT) as? Boolean) != false) maxScale() else 1f
+        if ((engine.callMethod(ZOOMS_OUT) as? Boolean) != false) cachedMaxScale else 1f
 
     @SuppressLint("DiscouragedApi")
-    private fun maxScale(): Float {
+    private fun computeMaxScale(): Float {
         val resources = Resources.getSystem()
         val id = resources.getIdentifier(MAX_SCALE, DIMEN, ANDROID)
         if (id == 0) return 1f
@@ -440,11 +442,14 @@ internal object WallpaperCapture {
 
     private fun sampledKey(bitmap: Bitmap): String {
         val crc = CRC32()
-        val row = IntArray(SAMPLES)
+        val wSpan = bitmap.width - 1
+        val hSpan = bitmap.height - 1
+        val denom = SAMPLES - 1
         for (y in 0 until SAMPLES) {
-            val py = y * (bitmap.height - 1) / (SAMPLES - 1)
-            for (x in 0 until SAMPLES) row[x] = bitmap[x * (bitmap.width - 1) / (SAMPLES - 1), py]
-            row.forEach { value -> crc.update(value) }
+            val py = y * hSpan / denom
+            for (x in 0 until SAMPLES) {
+                crc.update(bitmap[x * wSpan / denom, py])
+            }
         }
         return "${bitmap.width}x${bitmap.height}:" + crc.value
     }

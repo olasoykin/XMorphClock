@@ -361,20 +361,26 @@ fun BoxScope.ItemOverlay(
     val gridPlaceholder = placeholders.gridPlaceholder
     val inlinePlaceholder = placeholders.inlinePlaceholder
 
-    val interactiveRects = buildMap {
-        clockRect?.let { put(LockTarget.CLOCK, it) }
-        (displayGridRect ?: gridPlaceholder)?.let { put(LockTarget.WIDGET_GRID, it) }
-        (displayInlineRect ?: inlinePlaceholder)?.let { put(LockTarget.INLINE_GRID, it) }
+    val interactiveRects = remember(clockRect, displayGridRect, gridPlaceholder, displayInlineRect, inlinePlaceholder) {
+        buildMap {
+            clockRect?.let { put(LockTarget.CLOCK, it) }
+            (displayGridRect ?: gridPlaceholder)?.let { put(LockTarget.WIDGET_GRID, it) }
+            (displayInlineRect ?: inlinePlaceholder)?.let { put(LockTarget.INLINE_GRID, it) }
+        }
     }
-    val resizableRects = buildMap {
-        clockRect?.let { put(LockTarget.CLOCK, it) }
-        displayGridRect?.let { put(LockTarget.WIDGET_GRID, it) }
-        displayInlineRect?.let { put(LockTarget.INLINE_GRID, it) }
+    val resizableRects = remember(clockRect, displayGridRect, displayInlineRect) {
+        buildMap {
+            clockRect?.let { put(LockTarget.CLOCK, it) }
+            displayGridRect?.let { put(LockTarget.WIDGET_GRID, it) }
+            displayInlineRect?.let { put(LockTarget.INLINE_GRID, it) }
+        }
     }
-    val draggableRawRects = buildMap {
-        clockRaw?.let { put(LockTarget.CLOCK, it) }
-        gridRaw?.let { put(LockTarget.WIDGET_GRID, it) }
-        inlineRaw?.let { put(LockTarget.INLINE_GRID, it) }
+    val draggableRawRects = remember(clockRaw, gridRaw, inlineRaw) {
+        buildMap {
+            clockRaw?.let { put(LockTarget.CLOCK, it) }
+            gridRaw?.let { put(LockTarget.WIDGET_GRID, it) }
+            inlineRaw?.let { put(LockTarget.INLINE_GRID, it) }
+        }
     }
     val shortcutObstacleBounds = remember(leftShortcutRect, rightShortcutRect, pad, frameLeft, frameTop, unit) {
         if (unit <= 0f) emptyList()
@@ -1102,17 +1108,33 @@ private fun SelectionZoneFrame(
     )
     val fillAlpha by animateFloatAsState(if (selected) 0.06f else 0f, tween(180), label = "zoneFill")
 
-    val dash = remember(density) {
-        with(density) { PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx())) }
-    }
     val cornerPaths = remember { Array(4) { Path() } }
+    val frameDraw = remember(density) {
+        with(density) {
+            object {
+                val dash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()))
+                val borderStroke = Stroke(1.dp.toPx())
+                val gridStrokeWidth = 1.dp.toPx()
+                val gridPad = 4.dp.toPx()
+                val cornerRadiusMax = 18.dp.toPx()
+                val armMax = 15.dp.toPx()
+                val armMin = 4.dp.toPx()
+                val cornerStrokeNormal = Stroke(3.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                val cornerStrokeActive = Stroke(4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                val pillHalfMax = 12.dp.toPx()
+                val pillMinSpan = 8.dp.toPx()
+                val edgePillWidthNormal = 2.8.dp.toPx()
+                val edgePillWidthActive = 3.8.dp.toPx()
+            }
+        }
+    }
 
     Canvas(
         Modifier
             .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
             .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
     ) {
-        val corner = minOf(18.dp.toPx(), minOf(size.width, size.height) * 0.28f)
+        val corner = minOf(frameDraw.cornerRadiusMax, minOf(size.width, size.height) * 0.28f)
         if (fillAlpha > 0f) {
             drawRoundRect(
                 color = onInk.copy(alpha = fillAlpha),
@@ -1123,7 +1145,7 @@ private fun SelectionZoneFrame(
             drawRoundRect(
                 color = frameColor,
                 cornerRadius = CornerRadius(corner),
-                style = Stroke(1.dp.toPx())
+                style = frameDraw.borderStroke
             )
             return@Canvas
         }
@@ -1131,40 +1153,39 @@ private fun SelectionZoneFrame(
         drawRoundRect(
             color = frameColor.copy(alpha = 0.28f),
             cornerRadius = CornerRadius(corner),
-            style = Stroke(1.dp.toPx())
+            style = frameDraw.borderStroke
         )
 
         if (columns > 1 || rows > 1) {
+            val gPad = frameDraw.gridPad
             for (c in 1 until columns) {
                 val gx = size.width * c / columns
                 drawLine(
                     color = frameColor.copy(alpha = 0.32f),
-                    start = Offset(gx, 4.dp.toPx()),
-                    end = Offset(gx, size.height - 4.dp.toPx()),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = dash
+                    start = Offset(gx, gPad),
+                    end = Offset(gx, size.height - gPad),
+                    strokeWidth = frameDraw.gridStrokeWidth,
+                    pathEffect = frameDraw.dash
                 )
             }
             for (r in 1 until rows) {
                 val gy = size.height * r / rows
                 drawLine(
                     color = frameColor.copy(alpha = 0.32f),
-                    start = Offset(4.dp.toPx(), gy),
-                    end = Offset(size.width - 4.dp.toPx(), gy),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = dash
+                    start = Offset(gPad, gy),
+                    end = Offset(size.width - gPad, gy),
+                    strokeWidth = frameDraw.gridStrokeWidth,
+                    pathEffect = frameDraw.dash
                 )
             }
         }
 
         if (allowCorners) {
-            val arm = minOf(15.dp.toPx(), (minOf(size.width, size.height) - corner * 2f).coerceAtLeast(4.dp.toPx()) * 0.45f)
+            val arm = minOf(frameDraw.armMax, (minOf(size.width, size.height) - corner * 2f).coerceAtLeast(frameDraw.armMin) * 0.45f)
             val c2 = corner * 2f
 
-            fun cornerStroke(handle: ResizeHandle): Stroke {
-                val w = if (activeHandle == handle) 4.dp.toPx() else 3.2.dp.toPx()
-                return Stroke(w, cap = StrokeCap.Round, join = StrokeJoin.Round)
-            }
+            fun cornerStroke(handle: ResizeHandle): Stroke =
+                if (activeHandle == handle) frameDraw.cornerStrokeActive else frameDraw.cornerStrokeNormal
 
             fun cornerColor(handle: ResizeHandle): Color =
                 if (activeHandle == handle) primaryColor else frameColor
@@ -1205,22 +1226,22 @@ private fun SelectionZoneFrame(
 
         val cx = size.width / 2f
         val cy = size.height / 2f
-        val hPillHalf = minOf(12.dp.toPx(), (size.width - corner * 2f).coerceAtLeast(8.dp.toPx()) * 0.24f)
-        val vPillHalf = minOf(12.dp.toPx(), (size.height - corner * 2f).coerceAtLeast(8.dp.toPx()) * 0.24f)
+        val hPillHalf = minOf(frameDraw.pillHalfMax, (size.width - corner * 2f).coerceAtLeast(frameDraw.pillMinSpan) * 0.24f)
+        val vPillHalf = minOf(frameDraw.pillHalfMax, (size.height - corner * 2f).coerceAtLeast(frameDraw.pillMinSpan) * 0.24f)
 
         if (allowVerticalEdges && hPillHalf > 2f) {
             drawLine(
                 color = if (activeHandle == ResizeHandle.TOP) primaryColor else frameColor,
                 start = Offset(cx - hPillHalf, 0f),
                 end = Offset(cx + hPillHalf, 0f),
-                strokeWidth = if (activeHandle == ResizeHandle.TOP) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                strokeWidth = if (activeHandle == ResizeHandle.TOP) frameDraw.edgePillWidthActive else frameDraw.edgePillWidthNormal,
                 cap = StrokeCap.Round
             )
             drawLine(
                 color = if (activeHandle == ResizeHandle.BOTTOM) primaryColor else frameColor,
                 start = Offset(cx - hPillHalf, size.height),
                 end = Offset(cx + hPillHalf, size.height),
-                strokeWidth = if (activeHandle == ResizeHandle.BOTTOM) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                strokeWidth = if (activeHandle == ResizeHandle.BOTTOM) frameDraw.edgePillWidthActive else frameDraw.edgePillWidthNormal,
                 cap = StrokeCap.Round
             )
         }
@@ -1229,14 +1250,14 @@ private fun SelectionZoneFrame(
                 color = if (activeHandle == ResizeHandle.LEFT) primaryColor else frameColor,
                 start = Offset(0f, cy - vPillHalf),
                 end = Offset(0f, cy + vPillHalf),
-                strokeWidth = if (activeHandle == ResizeHandle.LEFT) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                strokeWidth = if (activeHandle == ResizeHandle.LEFT) frameDraw.edgePillWidthActive else frameDraw.edgePillWidthNormal,
                 cap = StrokeCap.Round
             )
             drawLine(
                 color = if (activeHandle == ResizeHandle.RIGHT) primaryColor else frameColor,
                 start = Offset(size.width, cy - vPillHalf),
                 end = Offset(size.width, cy + vPillHalf),
-                strokeWidth = if (activeHandle == ResizeHandle.RIGHT) 3.8.dp.toPx() else 2.8.dp.toPx(),
+                strokeWidth = if (activeHandle == ResizeHandle.RIGHT) frameDraw.edgePillWidthActive else frameDraw.edgePillWidthNormal,
                 cap = StrokeCap.Round
             )
         }
@@ -1252,6 +1273,17 @@ private fun SmartCenterGuides(
     screenCenterY: Float
 ) {
     val accent = Accent
+    val density = LocalDensity.current
+    val guideDraw = remember(density) {
+        with(density) {
+            object {
+                val centerWidth = 1.75.dp.toPx()
+                val sideWidth = 1.dp.toPx()
+                val dash = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))
+                val dotRadius = 3.5.dp.toPx()
+            }
+        }
+    }
     Canvas(Modifier.fillMaxSize()) {
         guides.guideX?.let { x ->
             val px = frameLeft + x * unit
@@ -1260,11 +1292,11 @@ private fun SmartCenterGuides(
                 color = if (isCenter) accent else accent.copy(alpha = 0.78f),
                 start = Offset(px, 0f),
                 end = Offset(px, size.height),
-                strokeWidth = if (isCenter) 1.75.dp.toPx() else 1.dp.toPx(),
-                pathEffect = if (isCenter) null else PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))
+                strokeWidth = if (isCenter) guideDraw.centerWidth else guideDraw.sideWidth,
+                pathEffect = if (isCenter) null else guideDraw.dash
             )
             if (isCenter) {
-                drawCircle(color = accent, radius = 3.5.dp.toPx(), center = Offset(px, size.height / 2f))
+                drawCircle(color = accent, radius = guideDraw.dotRadius, center = Offset(px, size.height / 2f))
             }
         }
         guides.guideY?.let { y ->
@@ -1274,11 +1306,11 @@ private fun SmartCenterGuides(
                 color = if (isCenter) accent else accent.copy(alpha = 0.78f),
                 start = Offset(0f, py),
                 end = Offset(size.width, py),
-                strokeWidth = if (isCenter) 1.75.dp.toPx() else 1.dp.toPx(),
-                pathEffect = if (isCenter) null else PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))
+                strokeWidth = if (isCenter) guideDraw.centerWidth else guideDraw.sideWidth,
+                pathEffect = if (isCenter) null else guideDraw.dash
             )
             if (isCenter) {
-                drawCircle(color = accent, radius = 3.5.dp.toPx(), center = Offset(size.width / 2f, py))
+                drawCircle(color = accent, radius = guideDraw.dotRadius, center = Offset(size.width / 2f, py))
             }
         }
     }

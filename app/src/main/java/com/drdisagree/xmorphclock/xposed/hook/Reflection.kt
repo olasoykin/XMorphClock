@@ -1,17 +1,27 @@
 package com.drdisagree.xmorphclock.xposed.hook
 
 import java.lang.reflect.Field
+import java.util.concurrent.ConcurrentHashMap
+
+private val MISSING_FIELD = Any()
+private val fieldCache = ConcurrentHashMap<Class<*>, ConcurrentHashMap<String, Any>>()
 
 fun Class<*>.findField(name: String): Field? {
+    val byName = fieldCache.computeIfAbsent(this) { ConcurrentHashMap() }
+    byName[name]?.let { cached -> return if (cached === MISSING_FIELD) null else cached as Field }
+
+    var resolved: Field? = null
     var current: Class<*>? = this
     while (current != null) {
         try {
-            return current.getDeclaredField(name).apply { isAccessible = true }
+            resolved = current.getDeclaredField(name).apply { isAccessible = true }
+            break
         } catch (_: NoSuchFieldException) {
             current = current.superclass
         }
     }
-    return null
+    byName.putIfAbsent(name, resolved ?: MISSING_FIELD)
+    return resolved
 }
 
 fun Any.fieldValue(name: String): Any? = try {
@@ -21,7 +31,7 @@ fun Any.fieldValue(name: String): Any? = try {
 }
 
 fun Any.callMethod(name: String): Any? = try {
-    javaClass.findMethod(name) { it.parameterCount == 0 }?.invoke(this)
+    javaClass.findZeroArgMethod(name)?.invoke(this)
 } catch (_: Throwable) {
     null
 }
@@ -33,5 +43,8 @@ fun staticFieldValue(className: String, name: String): Any? = try {
 }
 
 fun Any.setFieldValue(name: String, value: Any?) {
-    runCatching { javaClass.findField(name)?.set(this, value) }
+    try {
+        javaClass.findField(name)?.set(this, value)
+    } catch (_: Throwable) {
+    }
 }

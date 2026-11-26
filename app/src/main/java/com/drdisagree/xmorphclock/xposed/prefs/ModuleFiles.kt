@@ -11,7 +11,7 @@ internal object ModuleFiles {
         if (preferApp) fromApp(name) ?: fromFramework(name) else fromFramework(name) ?: fromApp(name)
 
     private fun fromApp(name: String): ParcelFileDescriptor? {
-        val resolver = HostApplication.get()?.contentResolver ?: return null
+        val resolver = (HostApplication.get() ?: HostApplication.context())?.contentResolver ?: return null
         return runCatching { resolver.openFileDescriptor(RemotePrefsContract.fileUri(name), READ) }.getOrNull()?.takeIf(::hasContent)
     }
 

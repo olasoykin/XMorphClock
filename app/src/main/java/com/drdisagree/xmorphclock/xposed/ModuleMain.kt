@@ -19,7 +19,7 @@ class ModuleMain : XposedModule() {
         if (!param.isFirstPackage) return
         when {
             param.packageName == SystemUiModule.PACKAGE -> {
-                HookEnv.init(this, param.classLoader)
+                HookEnv.init(this, param.classLoader, param.packageName)
                 if (processName == null || processName == SystemUiModule.PACKAGE) {
                     SystemUiModule.start()
                 } else {
@@ -27,7 +27,7 @@ class ModuleMain : XposedModule() {
                 }
             }
             param.packageName in WallpaperPickerModule.PACKAGES -> {
-                HookEnv.init(this, param.classLoader)
+                HookEnv.init(this, param.classLoader, param.packageName)
                 WallpaperPickerModule.start()
             }
         }

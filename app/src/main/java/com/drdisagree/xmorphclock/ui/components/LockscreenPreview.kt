@@ -85,7 +85,8 @@ fun LockscreenPreview(
             }
         }
         if (face != null) {
-            val bitmap = wallpaper?.asAndroidBitmap()
+            val bitmap = remember(wallpaper) { wallpaper?.asAndroidBitmap() }
+            val backdropRect = remember { RectF() }
             ClockFacePreview(
                 face = face,
                 modifier = Modifier.clockFrame(geometry, largeProgress),
@@ -102,7 +103,7 @@ fun LockscreenPreview(
                     }
                     view.setDepth(depth?.bitmap, depth?.opacity ?: 0f, depth?.widgetsFront == true)
                     if (bitmap != null) {
-                        view.setBackdropFrame(backdropFrame(bitmap, widthPx, heightPx, geometry, largeProgress()))
+                        view.setBackdropFrame(backdropFrameInto(bitmap, widthPx, heightPx, geometry, largeProgress(), backdropRect))
                     }
                 }
             )

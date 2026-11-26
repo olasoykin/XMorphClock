@@ -19,6 +19,7 @@ internal class DepthPainter {
     private val location = IntArray(2)
     private val area = Rect()
     private val matrix = ColorMatrix()
+    private val colorMatrixValues = FloatArray(20).apply { this[18] = 1f }
     private var filterKey = Long.MIN_VALUE
 
     fun draw(view: View, canvas: Canvas, clip: Boolean) {
@@ -58,14 +59,13 @@ internal class DepthPainter {
             return
         }
         val keep = (1f - dim) * (1f - scrim)
-        matrix.set(
-            floatArrayOf(
-                keep, 0f, 0f, 0f, Color.red(tint) * scrim,
-                0f, keep, 0f, 0f, Color.green(tint) * scrim,
-                0f, 0f, keep, 0f, Color.blue(tint) * scrim,
-                0f, 0f, 0f, 1f, 0f
-            )
-        )
+        colorMatrixValues[0] = keep
+        colorMatrixValues[4] = Color.red(tint) * scrim
+        colorMatrixValues[6] = keep
+        colorMatrixValues[9] = Color.green(tint) * scrim
+        colorMatrixValues[12] = keep
+        colorMatrixValues[14] = Color.blue(tint) * scrim
+        matrix.set(colorMatrixValues)
         paint.colorFilter = ColorMatrixColorFilter(matrix)
     }
 

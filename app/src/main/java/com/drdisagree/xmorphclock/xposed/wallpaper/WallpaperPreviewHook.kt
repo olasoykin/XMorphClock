@@ -27,6 +27,7 @@ import com.drdisagree.xmorphclock.xposed.hook.setFieldValue
 import com.drdisagree.xmorphclock.xposed.prefs.ModulePrefs
 import com.drdisagree.xmorphclock.xposed.preview.PreviewClockSlot
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 
 object WallpaperPreviewHook {
 
@@ -160,6 +161,14 @@ object WallpaperPreviewHook {
     private val hookedDecorViews = WeakHashMap<ViewGroup, LongArray>()
     private val hiddenViews = WeakHashMap<View, HiddenState>()
     private val entryNameCache = HashMap<Int, String>()
+    private val legacyIdsCache = ConcurrentHashMap<String, IntArray>()
+    private val dedicatedClockSurfaceCache = ConcurrentHashMap<Class<*>, Boolean>()
+    private val explicitClockClassCache = ConcurrentHashMap<Class<*>, Boolean>()
+    private val scratchSurfaces = ArrayList<Rect>()
+    private val scratchProtected = HashSet<View>()
+    private val scratchOverlayClocks = LinkedHashSet<View>()
+    private val scratchBounds = Rect()
+    private val scratchLoc = IntArray(2)
     private var lastErrorLogMs = 0L
 
     private const val CANCEL_GAP_MS = 500L
@@ -282,12 +291,16 @@ object WallpaperPreviewHook {
 
     private fun enforceClockOverlaysInDecor(decor: ViewGroup): Boolean {
         val enabled = ModulePrefs.isClockEnabled && ModulePrefs.isWallpaperPreviewEnabled
-        val previewSurfaces = ArrayList<Rect>()
-        collectPreviewSurfaceRects(decor, decor, previewSurfaces)
+        val previewSurfaces = scratchSurfaces
+        val protectedAncestors = scratchProtected
+        val overlayClocks = scratchOverlayClocks
+        previewSurfaces.clear()
+        protectedAncestors.clear()
+        overlayClocks.clear()
 
-        val overlayClocks = LinkedHashSet<View>()
+        collectPreviewSurfaceRects(decor, decor, previewSurfaces)
         if (previewSurfaces.isNotEmpty()) {
-            val protectedAncestors = collectProtectedAncestors(decor)
+            collectSurfaceAndSlotAncestors(decor, decor, protectedAncestors)
             collectOverlayClocks(decor, previewSurfaces, protectedAncestors, overlayClocks)
         }
 
@@ -300,17 +313,13 @@ object WallpaperPreviewHook {
             overlayClocks.forEach {
                 if (restoreStockView(it)) changed = true
             }
-            hiddenViews.keys.toList().forEach { view ->
-                if (view.rootView === decor && restoreStockView(view)) changed = true
+            if (hiddenViews.isNotEmpty()) {
+                hiddenViews.keys.toList().forEach { view ->
+                    if (view.rootView === decor && restoreStockView(view)) changed = true
+                }
             }
         }
         return changed
-    }
-
-    private fun collectProtectedAncestors(decor: ViewGroup): Set<View> {
-        val protected = HashSet<View>()
-        collectSurfaceAndSlotAncestors(decor, decor, protected)
-        return protected
     }
 
     private fun collectSurfaceAndSlotAncestors(
@@ -351,17 +360,22 @@ object WallpaperPreviewHook {
                 return true
             }
         }
-        var cls: Class<*>? = view.javaClass
+        val viewClass = view.javaClass
+        dedicatedClockSurfaceCache[viewClass]?.let { return it }
+        var matched = false
+        var cls: Class<*>? = viewClass
         while (cls != null && cls != SurfaceView::class.java && cls != TextureView::class.java && cls != View::class.java) {
             val name = cls.name
             if (CLOCK_CLASS_PREFIXES.any { name.startsWith(it) } ||
                 CLOCK_CLASS_KEYWORDS.any { name.contains(it, ignoreCase = true) }
             ) {
-                return true
+                matched = true
+                break
             }
             cls = cls.superclass
         }
-        return false
+        dedicatedClockSurfaceCache.putIfAbsent(viewClass, matched)
+        return matched
     }
 
     private fun collectPreviewSurfaceRects(group: ViewGroup, decor: ViewGroup, out: MutableList<Rect>) {
@@ -395,8 +409,9 @@ object WallpaperPreviewHook {
             if ((child is SurfaceView || child is TextureView) && !isDedicatedClockSurface(child)) continue
 
             if (child !in protectedAncestors) {
-                val bounds = globalVisibleBounds(child)
-                if (!bounds.isEmpty && isOverlayClockCandidate(child, bounds, previewSurfaces)) {
+                if (fillVisibleBounds(child, scratchBounds) &&
+                    isOverlayClockCandidate(child, scratchBounds, previewSurfaces)
+                ) {
                     out += child
                     continue
                 }
@@ -445,15 +460,26 @@ object WallpaperPreviewHook {
         if (entry != null && entry in CLOCK_ENTRY_NAMES) return true
         if (view is TextClock) return true
 
-        var cls: Class<*>? = view.javaClass
+        val viewClass = view.javaClass
+        explicitClockClassCache[viewClass]?.let { return it }
+        var matched = false
+        var cls: Class<*>? = viewClass
         while (cls != null && cls != ViewGroup::class.java && cls != View::class.java) {
             val name = cls.name
-            if (name.contains("PreviewClockSlot") || name.contains("ClockFaceView")) return false
-            if (CLOCK_CLASS_PREFIXES.any { name.startsWith(it) }) return true
-            if (CLOCK_CLASS_KEYWORDS.any { name.contains(it, ignoreCase = true) }) return true
+            if (name.contains("PreviewClockSlot") || name.contains("ClockFaceView")) {
+                matched = false
+                break
+            }
+            if (CLOCK_CLASS_PREFIXES.any { name.startsWith(it) } ||
+                CLOCK_CLASS_KEYWORDS.any { name.contains(it, ignoreCase = true) }
+            ) {
+                matched = true
+                break
+            }
             cls = cls.superclass
         }
-        return false
+        explicitClockClassCache.putIfAbsent(viewClass, matched)
+        return matched
     }
 
     private fun overlapsPreviewSurface(bounds: Rect, surfaceRect: Rect): Boolean {
@@ -485,16 +511,24 @@ object WallpaperPreviewHook {
     }
 
     private fun globalVisibleBounds(view: View): Rect {
-        if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return Rect()
         val rect = Rect()
-        if (view.getGlobalVisibleRect(rect) && !rect.isEmpty) {
-            return rect
+        fillVisibleBounds(view, rect)
+        return rect
+    }
+
+    private fun fillVisibleBounds(view: View, out: Rect): Boolean {
+        if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) {
+            out.setEmpty()
+            return false
         }
-        val loc = IntArray(2)
-        view.getLocationInWindow(loc)
+        if (view.getGlobalVisibleRect(out) && !out.isEmpty) {
+            return true
+        }
+        view.getLocationInWindow(scratchLoc)
         val scaledW = (view.width * kotlin.math.abs(view.scaleX)).toInt().coerceAtLeast(1)
         val scaledH = (view.height * kotlin.math.abs(view.scaleY)).toInt().coerceAtLeast(1)
-        return Rect(loc[0], loc[1], loc[0] + scaledW, loc[1] + scaledH)
+        out.set(scratchLoc[0], scratchLoc[1], scratchLoc[0] + scaledW, scratchLoc[1] + scaledH)
+        return !out.isEmpty
     }
 
     private fun enforceContainer(container: ViewGroup) {
@@ -514,8 +548,14 @@ object WallpaperPreviewHook {
     @SuppressLint("DiscouragedApi")
     private fun enforce(container: ViewGroup) {
         val pkg = container.context.packageName
-        val timeId = container.resources.getIdentifier(LOCK_TIME_ID, ID_TYPE, pkg)
-        val dateId = container.resources.getIdentifier(LOCK_DATE_ID, ID_TYPE, pkg)
+        val ids = legacyIdsCache.getOrPut(pkg) {
+            intArrayOf(
+                container.resources.getIdentifier(LOCK_TIME_ID, ID_TYPE, pkg),
+                container.resources.getIdentifier(LOCK_DATE_ID, ID_TYPE, pkg)
+            )
+        }
+        val timeId = ids[0]
+        val dateId = ids[1]
 
         val timeView = if (timeId != 0) container.findViewById<View>(timeId) else null
         val dateView = if (dateId != 0) container.findViewById<View>(dateId) else null
@@ -526,6 +566,8 @@ object WallpaperPreviewHook {
         if (enabled) {
             hideStockView(timeView)
             hideStockView(dateView)
+            if (container.clipChildren) container.clipChildren = false
+            if (container.clipToPadding) container.clipToPadding = false
 
             val topOffset = resolveTopOffset(container, existingSlot?.height ?: 0, dateView, timeView)
             if (existingSlot == null) {

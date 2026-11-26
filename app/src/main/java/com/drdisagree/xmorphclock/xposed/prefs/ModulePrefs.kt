@@ -217,7 +217,7 @@ object ModulePrefs {
     }
 
     private fun pull(key: String?) {
-        val context = HostApplication.get() ?: return
+        val context = HostApplication.get() ?: HostApplication.context() ?: return
         val result = read(context, key) ?: return
         if (key == null) snapshotComplete = result.getBoolean(RemotePrefsContract.COMPLETE)
         val changed = adopt(result, key).count(::settle) > 0

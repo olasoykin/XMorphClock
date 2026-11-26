@@ -30,6 +30,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.animation.PathInterpolator
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
@@ -110,6 +111,15 @@ class ClockFaceView(
 
     var morphOnChange = true
 
+    var fitToBounds = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidateFrames()
+            requestLayout()
+            invalidate()
+        }
+
     fun editFace(value: ClockFace) {
         instantFace = true
         face = value
@@ -118,6 +128,7 @@ class ClockFaceView(
 
     private fun refreshFace(layersChanged: Boolean = true) {
         if (layersChanged || texts.size != face.layers.size) {
+            layerIndexById = buildLayerIndex(face)
             metrics.clear()
             invalidateFrames()
             texts.clear()
@@ -136,6 +147,7 @@ class ClockFaceView(
             field = value
             updateTime()
             syncIdle()
+            invalidate()
         }
 
     var onTileTap: ((FaceTile) -> Unit)? = null
@@ -190,7 +202,10 @@ class ClockFaceView(
     private val measurePaint = Paint(TEXT_FLAGS).apply { textSize = BASE_SIZE }
     private val fitPaint = Paint(TEXT_FLAGS).apply { textSize = BASE_SIZE }
     private val bounds = Rect()
-    private val outlinePaths = HashMap<OutlineKey, Path>()
+    private val emptyPath = Path()
+    private val backdropSrcRect = RectF()
+    private var layerIndexById: Map<String, Int> = buildLayerIndex(face)
+    private val outlinePaths = LinkedHashMap<OutlineKey, Path>(MAX_OUTLINE_PATHS, 0.75f, true)
     private var morphFrom: Map<String, Placement>? = null
     private var morphStart = 0L
     private val drawMatrix = Matrix()
@@ -233,7 +248,7 @@ class ClockFaceView(
         style = Paint.Style.STROKE
         strokeJoin = Paint.Join.ROUND
     }
-    private val ringPaths = HashMap<RingKey, Path>()
+    private val ringPaths = LinkedHashMap<RingKey, Path>(MAX_OUTLINE_PATHS, 0.75f, true)
     private var glassRenderer: GlassRenderer? = null
     private var textGlassRenderer: TextGlassRenderer? = null
     private val glassFilter = ColorMatrixColorFilter(ColorMatrix().apply {
@@ -275,7 +290,7 @@ class ClockFaceView(
     private val previousTexts = HashMap<Int, String>()
     private val changeStarts = HashMap<Int, LongArray>()
 
-    private val metrics = HashMap<MetricsKey, LayerMetrics>()
+    private val metrics = LinkedHashMap<MetricsKey, LayerMetrics>(MAX_METRICS_CACHE, 0.75f, true)
     private val inkCache = LinkedHashMap<InkKey, Shader>(MAX_INK_CACHE, 0.75f, true)
     @Volatile
     internal var layoutRevision: Int = 0
@@ -291,6 +306,7 @@ class ClockFaceView(
 
     private var framesWidth = 0f
     private var framesPalette = -1
+    private var framesFitToBounds = false
     private var smallFrames: Map<String, Placement>? = null
     private var largeFrames: Map<String, Placement>? = null
     private var aodSmallFrames: Map<String, Placement>? = null
@@ -372,15 +388,18 @@ class ClockFaceView(
         } else {
             (calendar.get(Calendar.HOUR) + 11) % 12 + 1
         }
+        val prevHandHour = handHour
+        val prevHandMinute = handMinute
         handHour = calendar.get(Calendar.HOUR_OF_DAY)
         handMinute = calendar.get(Calendar.MINUTE)
-        val hours = "%02d".format(hour)
-        val bareHours = hour.toString()
-        val minutes = "%02d".format(calendar.get(Calendar.MINUTE))
+        val hours = TWO_DIGITS[hour.coerceIn(0, TWO_DIGITS.lastIndex)]
+        val bareHours = if (hour in 0..9) SINGLE_DIGITS[hour] else TWO_DIGITS[hour.coerceIn(0, TWO_DIGITS.lastIndex)]
+        val minutes = TWO_DIGITS[handMinute.coerceIn(0, TWO_DIGITS.lastIndex)]
         var relayout = false
+        var textChanged = prevHandHour != handHour || prevHandMinute != handMinute
 
         face.layers.forEachIndexed { index, layer ->
-            val text = when (layer.type) {
+            val rawText = when (layer.type) {
                 FaceLayerType.HOURS -> if (layer.hourZero) hours else bareHours
                 FaceLayerType.MINUTES -> minutes
                 FaceLayerType.COLON -> ":"
@@ -397,8 +416,11 @@ class ClockFaceView(
                 else -> FaceValues.text(layer, data, dataPhrases).orEmpty().cased(layer.caps)
             }
             val old = texts[index]
-            texts[index] = fit(layer, text)
-            if (old == null || old == text) return@forEachIndexed
+            val text = fit(layer, rawText)
+            texts[index] = text
+            if (old == text) return@forEachIndexed
+            textChanged = true
+            if (old == null) return@forEachIndexed
 
             if (old.length != text.length || !layer.isTime) {
                 metrics.keys.removeAll { it.index == index }
@@ -409,7 +431,7 @@ class ClockFaceView(
         }
 
         if (relayout) requestLayout()
-        invalidate()
+        if (textChanged || relayout) invalidate()
         if (isAttachedToWindow && importantForAccessibility != IMPORTANT_FOR_ACCESSIBILITY_NO) {
             describe(calendar)
         }
@@ -417,6 +439,10 @@ class ClockFaceView(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        (parent as? ViewGroup)?.apply {
+            clipChildren = false
+            clipToPadding = false
+        }
         val receiverContext = context.applicationContext ?: context
         runCatching {
             ContextCompat.registerReceiver(
@@ -441,13 +467,20 @@ class ClockFaceView(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec).toFloat()
-        val now = SystemClock.uptimeMillis()
-        val collapsing = idleFades.filterValues { it.target == 0f }.keys
+        val hasCollapsing = idleFades.isNotEmpty() && idleFades.values.any { it.target == 0f }
         val full = measureBottom(width, emptySet())
-        val bottom = if (collapsing.isEmpty()) {
+        val bottom = if (!hasCollapsing) {
             full
         } else {
-            val shown = collapsing.maxOf { idleFades.getValue(it).value(now) }
+            val now = SystemClock.uptimeMillis()
+            val collapsing = HashSet<String>()
+            var shown = 0f
+            for ((group, fadeState) in idleFades) {
+                if (fadeState.target == 0f) {
+                    collapsing.add(group)
+                    shown = max(shown, fadeState.value(now))
+                }
+            }
             lerp(measureBottom(width, collapsing), full, shown)
         }
         setMeasuredDimension(width.toInt(), resolveSize(ceil(bottom).toInt(), heightMeasureSpec))
@@ -476,10 +509,10 @@ class ClockFaceView(
             face.layers.forEachIndexed { index, layer ->
                 if (groupOf(layer.id) in exclude) return@forEachIndexed
                 val placement = placement(index, width) ?: return@forEachIndexed
-                if (placement.alpha > 0f) bottom = max(bottom, placement.bottom(layer))
+                if (placement.alpha > 0f) bottom = max(bottom, layerBottom(layer.id, placement))
             }
         }
-        return bottom
+        return max(0f, bottom)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -850,10 +883,16 @@ class ClockFaceView(
     private fun outlinePathOf(text: String, typeface: Typeface, align: Paint.Align): Path {
         val key = OutlineKey(text, typeface, align, outlinePaint.letterSpacing)
         outlinePaths[key]?.let { return it }
-        if (outlinePaths.size >= MAX_OUTLINE_PATHS) outlinePaths.clear()
+        if (outlinePaths.size >= MAX_OUTLINE_PATHS) {
+            val it = outlinePaths.entries.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
         return Path().also { path ->
             outlinePaint.getTextPath(text, 0, text.length, 0f, 0f, path)
-            path.op(Path(), Path.Op.UNION)
+            path.op(emptyPath, Path.Op.UNION)
             outlinePaths[key] = path
         }
     }
@@ -861,7 +900,13 @@ class ClockFaceView(
     private fun ringPathOf(text: String, typeface: Typeface, align: Paint.Align, width: Float): Path {
         val key = RingKey(OutlineKey(text, typeface, align, outlinePaint.letterSpacing), width)
         ringPaths[key]?.let { return it }
-        if (ringPaths.size >= MAX_OUTLINE_PATHS) ringPaths.clear()
+        if (ringPaths.size >= MAX_OUTLINE_PATHS) {
+            val it = ringPaths.entries.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
         val glyph = outlinePathOf(text, typeface, align)
         ringStroker.strokeWidth = width
         return Path().also { ring ->
@@ -1595,8 +1640,9 @@ class ClockFaceView(
         val bitmap = (if (glass) glassBitmap else blendBitmap) ?: return null
         val shader = (if (glass) glassShader else blendShader) ?: return null
         if (backdropFrame.isEmpty) return null
+        backdropSrcRect.set(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())
         shaderMatrix.setRectToRect(
-            RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat()),
+            backdropSrcRect,
             backdropFrame,
             Matrix.ScaleToFit.FILL
         )
@@ -2054,7 +2100,7 @@ class ClockFaceView(
 
     private fun bottomOf(placements: Map<String, Placement>, exclude: Set<String> = emptySet()): Float =
         placements.filter { (id, placement) -> !placement.hidden && placement.alpha > 0f && groupOf(id) !in exclude }
-            .maxOfOrNull { (id, placement) -> placement.bottom(layerById(id)) } ?: 0f
+            .maxOfOrNull { (id, placement) -> layerBottom(id, placement) } ?: 0f
 
     private fun Placement.withAlpha(value: Float): Placement = Placement(
         left, top, size, value, rotation, capRatio, advances, widthAxis, heightAxis, tracking, weight, color, lineHeight, stretch, stretchX, effect, hidden, tiltX, tiltY, drop
@@ -2063,6 +2109,34 @@ class ClockFaceView(
     private fun Placement.withOffset(dx: Float, dy: Float): Placement = if (dx == 0f && dy == 0f) this else Placement(
         left + dx, top + dy, size, alpha, rotation, capRatio, advances, widthAxis, heightAxis, tracking, weight, color, lineHeight, stretch, stretchX, effect, hidden, tiltX, tiltY, drop
     )
+
+    private fun Placement.fitted(scale: Float, dx: Float, dy: Float): Placement =
+        if (scale == 1f && dx == 0f && dy == 0f) {
+            this
+        } else {
+            Placement(
+                left = left * scale + dx,
+                top = top * scale + dy,
+                size = size * scale,
+                alpha = alpha,
+                rotation = rotation,
+                capRatio = capRatio,
+                advances = advances,
+                widthAxis = widthAxis,
+                heightAxis = heightAxis,
+                tracking = tracking,
+                weight = weight,
+                color = color,
+                lineHeight = lineHeight,
+                stretch = stretch,
+                stretchX = stretchX,
+                effect = effect,
+                hidden = hidden,
+                tiltX = tiltX,
+                tiltY = tiltY,
+                drop = drop
+            )
+        }
 
     private fun fade(value: Float): Float {
         val t = value.coerceIn(0f, 1f)
@@ -2075,9 +2149,10 @@ class ClockFaceView(
     )
 
     private fun frames(width: Float): Pair<Map<String, Placement>, Map<String, Placement>> {
-        if (width != framesWidth || smallFrames == null || largeFrames == null || framesPalette != FaceColors.paletteVersion) {
+        if (width != framesWidth || smallFrames == null || largeFrames == null || framesPalette != FaceColors.paletteVersion || framesFitToBounds != fitToBounds) {
             framesWidth = width
             framesPalette = FaceColors.paletteVersion
+            framesFitToBounds = fitToBounds
             smallFrames = resolve(face.small, width)
             largeFrames = resolve(face.large, width)
             aodSmallFrames = face.aodSmall?.let { resolve(it, width) }
@@ -2108,6 +2183,123 @@ class ClockFaceView(
             FaceAlign.END -> anchor - box.width
         }
         place(root, left, root.placement.y * width, width, out)
+        return if (fitToBounds) fitPlacements(out, width) else out
+    }
+
+    private fun renderPad(layer: FaceLayer?, placement: Placement): Float {
+        layer ?: return 0f
+        val density = resources.displayMetrics.density
+        val outlinePad = if (layer.outline || layer.sleepStyle.outline) layer.outlineWidth * density * 0.5f else 0f
+        val shadowBlur = if (layer.shadow > 0f) {
+            val level = layer.shadow.coerceIn(0f, 1f)
+            placement.size * (SHADOW_MIN_RADIUS + SHADOW_RADIUS_RANGE * level)
+        } else {
+            0f
+        }
+        return outlinePad + shadowBlur
+    }
+
+    private fun shadowDropPad(layer: FaceLayer?): Float {
+        val level = layer?.shadow?.takeIf { it > 0f }?.coerceIn(0f, 1f) ?: return 0f
+        return SHADOW_DROP * level
+    }
+
+    private fun visualExtentOf(id: String, placement: Placement, out: RectF) {
+        extentOf(id, placement, out)
+        val layer = layerById(id)
+        val pad = renderPad(layer, placement)
+        val dropPad = placement.size * shadowDropPad(layer)
+        if (pad > 0f) {
+            out.left -= pad
+            out.top -= pad
+            out.right += pad
+            out.bottom += pad
+        }
+        if (dropPad > 0f) {
+            out.bottom += dropPad
+        }
+    }
+
+    private fun layerBottom(id: String, placement: Placement): Float {
+        val layer = layerById(id)
+        val pad = renderPad(layer, placement)
+        val dropPad = placement.size * shadowDropPad(layer)
+        visualExtentOf(id, placement, extent)
+        return max(placement.bottom(layer) + pad + dropPad, extent.bottom)
+    }
+
+    private fun fitPlacements(out: MutableMap<String, Placement>, width: Float): Map<String, Placement> {
+        if (out.isEmpty() || width <= 0f) return out
+        var minLeft = Float.POSITIVE_INFINITY
+        var minTop = Float.POSITIVE_INFINITY
+        var maxRight = Float.NEGATIVE_INFINITY
+        var found = false
+        out.forEach { (id, placement) ->
+            if (placement.hidden || placement.alpha <= 0f) return@forEach
+            visualExtentOf(id, placement, extent)
+            minLeft = min(minLeft, extent.left)
+            minTop = min(minTop, extent.top)
+            maxRight = max(maxRight, extent.right)
+            found = true
+        }
+        if (!found) {
+            out.forEach { (id, placement) ->
+                if (placement.hidden) return@forEach
+                visualExtentOf(id, placement, extent)
+                minLeft = min(minLeft, extent.left)
+                minTop = min(minTop, extent.top)
+                maxRight = max(maxRight, extent.right)
+                found = true
+            }
+        }
+        if (!found) return out
+
+        val contentWidth = maxRight - minLeft
+        if (contentWidth > width && contentWidth > 0f) {
+            val scale = (width / contentWidth).coerceIn(MIN_FIT_SCALE, 1f)
+            val targetTop = if (minTop < 0f) 0f else minTop
+            val dx = -minLeft * scale
+            val dy = targetTop - minTop * scale
+            out.entries.forEach { entry ->
+                entry.setValue(entry.value.fitted(scale, dx, dy))
+            }
+            var postMinLeft = Float.POSITIVE_INFINITY
+            var postMinTop = Float.POSITIVE_INFINITY
+            var postMaxRight = Float.NEGATIVE_INFINITY
+            out.forEach { (id, placement) ->
+                if (placement.hidden || placement.alpha <= 0f) return@forEach
+                visualExtentOf(id, placement, extent)
+                postMinLeft = min(postMinLeft, extent.left)
+                postMinTop = min(postMinTop, extent.top)
+                postMaxRight = max(postMaxRight, extent.right)
+            }
+            if (postMinLeft.isFinite()) {
+                val shiftX = when {
+                    postMinLeft < 0f && postMaxRight - postMinLeft <= width -> -postMinLeft
+                    postMaxRight > width && postMaxRight - postMinLeft <= width -> width - postMaxRight
+                    else -> 0f
+                }
+                val shiftY = if (postMinTop < 0f) -postMinTop else 0f
+                if (shiftX != 0f || shiftY != 0f) {
+                    out.entries.forEach { entry ->
+                        entry.setValue(entry.value.withOffset(shiftX, shiftY))
+                    }
+                }
+            }
+            return out
+        }
+
+        val dx = when {
+            minLeft < 0f -> -minLeft
+            maxRight > width -> width - maxRight
+            else -> 0f
+        }
+        val dy = if (minTop < 0f) -minTop else 0f
+        if (dx != 0f || dy != 0f) {
+            out.entries.forEach { entry ->
+                entry.setValue(entry.value.withOffset(dx, dy))
+            }
+        }
         return out
     }
 
@@ -2360,10 +2552,14 @@ class ClockFaceView(
         FaceAlign.END -> container - child
     }
 
-    private fun layerIndex(id: String): Int? =
-        face.layers.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+    private fun layerIndex(id: String): Int? = layerIndexById[id]
 
-    private fun layerById(id: String): FaceLayer? = face.layers.firstOrNull { it.id == id }
+    private fun layerById(id: String): FaceLayer? = layerIndexById[id]?.let { face.layers.getOrNull(it) }
+
+    private fun buildLayerIndex(target: ClockFace): Map<String, Int> =
+        HashMap<String, Int>(target.layers.size).apply {
+            target.layers.forEachIndexed { index, layer -> putIfAbsent(layer.id, index) }
+        }
 
     private fun fit(layer: FaceLayer, text: String): String {
         val limit = layer.maxEms ?: return text
@@ -2383,7 +2579,13 @@ class ClockFaceView(
     private fun metricsOf(index: Int, widthAxis: Int, heightAxis: Int, tracking: Float, weight: Int): LayerMetrics {
         val key = MetricsKey(index, widthAxis, heightAxis, tracking, weight)
         metrics[key]?.let { return it }
-        if (metrics.size >= MAX_METRICS_CACHE) metrics.clear()
+        if (metrics.size >= MAX_METRICS_CACHE) {
+            val it = metrics.entries.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove()
+            }
+        }
         return metrics.getOrPut(key) {
             val layer = face.layers[index]
             if (layer.isHand) return@getOrPut LayerMetrics(1f, floatArrayOf(1f), 1f)
@@ -2396,12 +2598,17 @@ class ClockFaceView(
             val drop = if (isSymbol(layer) || bounds.isEmpty || abs(bounds.bottom) <= bounds.height() * DROP_TOLERANCE) 0f else bounds.bottom / BASE_SIZE
 
             val advances = if (layer.isTime) {
-                val digit = DIGITS.maxOf { measurePaint.measureText(it.toString()) } / BASE_SIZE
+                var maxDigitWidth = 0f
+                for (d in DIGITS.indices) {
+                    val w = measurePaint.measureText(DIGITS, d, d + 1)
+                    if (w > maxDigitWidth) maxDigitWidth = w
+                }
+                val digit = maxDigitWidth / BASE_SIZE
                 FloatArray(text.length) { charIndex ->
                     val glyph = if (text[charIndex].isDigit()) {
                         digit
                     } else {
-                        measurePaint.measureText(text[charIndex].toString()) / BASE_SIZE
+                        measurePaint.measureText(text, charIndex, charIndex + 1) / BASE_SIZE
                     }
                     if (charIndex < text.lastIndex) glyph + tracking else glyph
                 }
@@ -2492,6 +2699,8 @@ class ClockFaceView(
         private const val ROLL_CLIP = 1.08f
         private const val SCALE_DELTA = 0.35f
         private const val DIGITS = "0123456789"
+        private val TWO_DIGITS = Array(60) { i -> if (i < 10) "0$i" else i.toString() }
+        private val SINGLE_DIGITS = Array(10) { i -> i.toString() }
         private const val DATE_FORMAT = "EEE d MMM"
         private val WAKE_EASING = PathInterpolator(0.3f, 0f, 0f, 1f)
         private val CHANGE_EASING = PathInterpolator(0.4f, 0f, 0.1f, 1f)
@@ -2507,6 +2716,7 @@ class ClockFaceView(
         private const val MAX_METRICS_CACHE = 128
         private const val STAGGER_SPAN = 0.58f
         private const val STAGGER_DELAY = 0.42f
+        private const val MIN_FIT_SCALE = 0.05f
     }
 
     private data class InkKey(

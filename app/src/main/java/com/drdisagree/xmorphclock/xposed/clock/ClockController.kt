@@ -28,6 +28,10 @@ object ClockController {
     private var largeTarget = 1f
     private var largeAnimator: ValueAnimator? = null
     private var initialized = false
+    private var cachedRevision = Int.MIN_VALUE
+    private var cachedWidth = -1
+    private var cachedStrokePx = 0f
+    private var cachedHasBounds = false
 
     fun init() {
         if (initialized) return
@@ -37,6 +41,8 @@ object ClockController {
 
     fun attach(view: ClockFaceView) {
         viewRef = WeakReference(view)
+        cachedRevision = Int.MIN_VALUE
+        cachedWidth = -1
         ClockSignals.isLargeClock()?.let { snapLarge(if (it) 1f else 0f) }
         view.setLargeProgress(largeProgress)
         applyProgress(view)
@@ -52,12 +58,25 @@ object ClockController {
         }
         val stockBurnIn = (view.parent as? ClockSlot)?.stockBurnIn == true
         val aod = if (ModulePrefs.isBurnInProtectionEnabled && !stockBurnIn) ClockSignals.aodProgress else 0f
+        if (aod <= 0f) {
+            if (view.translationX != 0f) view.translationX = 0f
+            if (view.translationY != 0f) view.translationY = 0f
+            return
+        }
         val density = view.resources.displayMetrics.density
-        val range = if (aod > 0f) (view.aodStrokePx() * BURN_IN_STROKE_FACTOR).coerceIn(BURN_IN_DP * density, BURN_IN_MAX_DP * density) else 0f
+        val rev = view.layoutRevision
+        val viewWidth = view.width
+        if (rev != cachedRevision || viewWidth != cachedWidth || view.isLayoutAnimating) {
+            cachedRevision = rev
+            cachedWidth = viewWidth
+            cachedStrokePx = view.aodStrokePx()
+            cachedHasBounds = view.contentBounds(content)
+        }
+        val range = (cachedStrokePx * BURN_IN_STROKE_FACTOR).coerceIn(BURN_IN_DP * density, BURN_IN_MAX_DP * density)
         val stepPx = BURN_IN_STEP_DP * density
-        var x = if (aod > 0f) BurnInOffset.x(range, stepPx) * aod else 0f
-        var y = if (aod > 0f) BurnInOffset.y(range, stepPx) * aod else 0f
-        if (aod > 0f && view.contentBounds(content)) {
+        var x = BurnInOffset.x(range, stepPx) * aod
+        var y = BurnInOffset.y(range, stepPx) * aod
+        if (cachedHasBounds) {
             val root = view.rootView
             view.getLocationOnScreen(location)
             val margin = EDGE_MARGIN_DP * density

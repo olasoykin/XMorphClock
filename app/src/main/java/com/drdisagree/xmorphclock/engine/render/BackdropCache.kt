@@ -40,34 +40,55 @@ internal object BackdropCache {
     }
 
     private fun blurPass(input: IntArray, output: IntArray, width: Int, height: Int, radius: Int, horizontal: Boolean) {
-        val lines = if (horizontal) height else width
-        val length = if (horizontal) width else height
         val window = radius * 2 + 1
-        for (line in 0 until lines) {
-            var a = 0
-            var r = 0
-            var g = 0
-            var b = 0
-            fun at(position: Int): Int {
-                val clamped = position.coerceIn(0, length - 1)
-                return if (horizontal) input[line * width + clamped] else input[clamped * width + line]
+        if (horizontal) {
+            val maxX = width - 1
+            for (y in 0 until height) {
+                val rowOffset = y * width
+                var a = 0
+                var r = 0
+                var g = 0
+                var b = 0
+                for (offset in -radius..radius) {
+                    val c = input[rowOffset + offset.coerceIn(0, maxX)]
+                    a += c ushr 24
+                    r += (c shr 16) and 0xFF
+                    g += (c shr 8) and 0xFF
+                    b += c and 0xFF
+                }
+                for (x in 0 until width) {
+                    output[rowOffset + x] = ((a / window) shl 24) or ((r / window) shl 16) or ((g / window) shl 8) or (b / window)
+                    val out = input[rowOffset + (x - radius).coerceIn(0, maxX)]
+                    val incoming = input[rowOffset + (x + radius + 1).coerceIn(0, maxX)]
+                    a += (incoming ushr 24) - (out ushr 24)
+                    r += ((incoming shr 16) and 0xFF) - ((out shr 16) and 0xFF)
+                    g += ((incoming shr 8) and 0xFF) - ((out shr 8) and 0xFF)
+                    b += (incoming and 0xFF) - (out and 0xFF)
+                }
             }
-            for (offset in -radius..radius) {
-                val c = at(offset)
-                a += c ushr 24
-                r += (c shr 16) and 0xFF
-                g += (c shr 8) and 0xFF
-                b += c and 0xFF
-            }
-            for (position in 0 until length) {
-                val index = if (horizontal) line * width + position else position * width + line
-                output[index] = ((a / window) shl 24) or ((r / window) shl 16) or ((g / window) shl 8) or (b / window)
-                val out = at(position - radius)
-                val incoming = at(position + radius + 1)
-                a += (incoming ushr 24) - (out ushr 24)
-                r += ((incoming shr 16) and 0xFF) - ((out shr 16) and 0xFF)
-                g += ((incoming shr 8) and 0xFF) - ((out shr 8) and 0xFF)
-                b += (incoming and 0xFF) - (out and 0xFF)
+        } else {
+            val maxY = height - 1
+            for (x in 0 until width) {
+                var a = 0
+                var r = 0
+                var g = 0
+                var b = 0
+                for (offset in -radius..radius) {
+                    val c = input[offset.coerceIn(0, maxY) * width + x]
+                    a += c ushr 24
+                    r += (c shr 16) and 0xFF
+                    g += (c shr 8) and 0xFF
+                    b += c and 0xFF
+                }
+                for (y in 0 until height) {
+                    output[y * width + x] = ((a / window) shl 24) or ((r / window) shl 16) or ((g / window) shl 8) or (b / window)
+                    val out = input[(y - radius).coerceIn(0, maxY) * width + x]
+                    val incoming = input[(y + radius + 1).coerceIn(0, maxY) * width + x]
+                    a += (incoming ushr 24) - (out ushr 24)
+                    r += ((incoming shr 16) and 0xFF) - ((out shr 16) and 0xFF)
+                    g += ((incoming shr 8) and 0xFF) - ((out shr 8) and 0xFF)
+                    b += (incoming and 0xFF) - (out and 0xFF)
+                }
             }
         }
     }
@@ -77,7 +98,9 @@ internal object BackdropCache {
         var remaining = factor
         while (remaining > 1) {
             val step = if (remaining >= 4) 4 else remaining
+            val prev = bitmap
             bitmap = bitmap.scale(max(1, bitmap.width / step), max(1, bitmap.height / step))
+            if (prev !== source && prev !== bitmap) prev.recycle()
             remaining /= step
         }
         return bitmap

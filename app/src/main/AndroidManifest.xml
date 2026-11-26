@@ -70,7 +70,7 @@
             android:name=".data.source.RemotePrefsProvider"
             android:authorities="com.drdisagree.xmorphclock.prefs"
             android:exported="true"
-            android:permission="android.permission.STATUS_BAR_SERVICE" />
+            tools:ignore="ExportedContentProvider" />
         <receiver
             android:name=".data.source.LockscreenFrameReceiver"
             android:exported="true"

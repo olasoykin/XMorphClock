@@ -20,10 +20,16 @@ object HostApplication {
     }
 
     @SuppressLint("PrivateApi")
-    fun context(): Context? = get() ?: try {
+    fun systemContext(): Context? = try {
         val thread = Class.forName(ACTIVITY_THREAD).getMethod(CURRENT_THREAD).invoke(null)
-        val system = thread?.javaClass?.getMethod(SYSTEM_CONTEXT)?.invoke(thread) as? Context
-        system?.createPackageContext(SYSTEMUI, 0)
+        thread?.javaClass?.getMethod(SYSTEM_CONTEXT)?.invoke(thread) as? Context
+    } catch (_: Throwable) {
+        null
+    }
+
+    fun context(): Context? = get() ?: try {
+        val pkg = HookEnv.packageName ?: SYSTEMUI
+        systemContext()?.createPackageContext(pkg, 0)
     } catch (_: Throwable) {
         null
     }

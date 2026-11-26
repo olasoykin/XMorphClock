@@ -362,8 +362,8 @@ fun HomeScreen(
                 val available = maxHeight
                 val availableWidth = maxWidth
                 SideEffect {
-                    previewHeight = available
-                    previewWidth = availableWidth
+                    if (previewHeight != available) previewHeight = available
+                    if (previewWidth != availableWidth) previewWidth = availableWidth
                 }
                 Crossfade(
                     targetState = editing,
@@ -1593,7 +1593,9 @@ private fun WidgetCarouselsBody(
                 }
             }
             items(sections, key = { it.category }) { section ->
-                val visibleFaces = section.faces.filterNot { it.face.category == CustomFaces.ELEMENT_CATEGORY }
+                val visibleFaces = remember(section.faces) {
+                    section.faces.filterNot { it.face.category == CustomFaces.ELEMENT_CATEGORY }
+                }
                 if (visibleFaces.isEmpty()) return@items
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     CarouselSectionHeader(

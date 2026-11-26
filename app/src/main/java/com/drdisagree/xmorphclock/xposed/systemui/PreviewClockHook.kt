@@ -463,6 +463,8 @@ object PreviewClockHook {
                 }
                 val params = createOverlayLayoutParams(topRoot, state.cachedTopOffset)
                 topRoot.addView(created, params)
+                disableClipping(topRoot)
+                disableClippingAlongAncestors(created, topRoot)
                 ensureSlotAboveSiblings(topRoot, created)
                 totalSlots.incrementAndGet()
                 HookReporter.count("previewSlotAdded")
@@ -496,6 +498,9 @@ object PreviewClockHook {
                 }
                 if (topRoot.getChildAt(topRoot.childCount - 1) !== existingSlot) {
                     existingSlot.bringToFront()
+                    changed = true
+                }
+                if (disableClipping(topRoot) || disableClippingAlongAncestors(existingSlot, topRoot)) {
                     changed = true
                 }
                 if (ensureSlotAboveSiblings(topRoot, existingSlot)) {
@@ -549,6 +554,7 @@ object PreviewClockHook {
                 if (PreviewTargetScanner.hideStockView(child)) changed = true
             }
             val desiredWidth = resolveSlotWidth(host)
+            val topRoot = resolveTopRoot(host)
             if (existingSlot == null) {
                 val created = PreviewClockSlot(host.context, initialLarge = isLarge)
                 val params = FrameLayout.LayoutParams(
@@ -557,6 +563,7 @@ object PreviewClockHook {
                     if (isLarge) Gravity.CENTER else Gravity.START or Gravity.TOP
                 )
                 host.addView(created, params)
+                disableClippingAlongAncestors(created, topRoot)
                 ensureSlotAboveSiblings(host, created)
                 totalSlots.incrementAndGet()
                 HookReporter.count("previewSlotAdded")
@@ -574,6 +581,9 @@ object PreviewClockHook {
                 }
                 if (host.getChildAt(host.childCount - 1) !== existingSlot) {
                     existingSlot.bringToFront()
+                    changed = true
+                }
+                if (disableClippingAlongAncestors(existingSlot, topRoot)) {
                     changed = true
                 }
                 if (ensureSlotAboveSiblings(host, existingSlot)) {
@@ -673,6 +683,30 @@ object PreviewClockHook {
             if (child.z > maxZ) maxZ = child.z
         }
         return maxZ
+    }
+
+    private fun disableClippingAlongAncestors(view: View, stopAt: ViewGroup?): Boolean {
+        var changed = false
+        var cursor: View? = view.parent as? View
+        while (cursor is ViewGroup) {
+            if (disableClipping(cursor)) changed = true
+            if (cursor === stopAt) break
+            cursor = cursor.parent as? View
+        }
+        return changed
+    }
+
+    private fun disableClipping(group: ViewGroup): Boolean {
+        var changed = false
+        if (group.clipChildren) {
+            group.clipChildren = false
+            changed = true
+        }
+        if (group.clipToPadding) {
+            group.clipToPadding = false
+            changed = true
+        }
+        return changed
     }
 
     private fun logThrottled(message: String, throwable: Throwable) {

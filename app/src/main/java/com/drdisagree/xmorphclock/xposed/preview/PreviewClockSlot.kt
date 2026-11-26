@@ -73,18 +73,20 @@ class PreviewClockSlot(
 
         val targetContext = moduleContext(context) ?: return
         val rawFace = resolveFace(targetContext) ?: return
-        val face = FaceComposer.clockOnly(rawFace)
+        val face = FaceComposer.clockOnly(rawFace, resetVerticalOffset = true)
 
         val current = clockView
         if (current == null) {
             val view = ClockFaceView(context, face, targetContext).apply {
                 morphOnChange = false
+                fitToBounds = true
                 setLargeProgress(if (isLargeState) 1f else 0f)
             }
             clockView = view
             addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         } else {
             current.isVisible = true
+            current.fitToBounds = true
             current.setLargeProgress(if (isLargeState) 1f else 0f)
             if (current.face != face) {
                 current.face = face

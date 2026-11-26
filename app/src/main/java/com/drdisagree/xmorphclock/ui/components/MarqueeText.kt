@@ -58,13 +58,21 @@ fun MarqueeText(text: String, style: TextStyle, color: Color, modifier: Modifier
             delay(REPEAT_DELAY_MS)
         }
     }
+    val needsFadeLayer = overflowing || endFade > 0f
     Box(
         modifier
             .onSizeChanged { boxWidth = it.width }
             .clipToBounds()
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .graphicsLayer {
+                compositingStrategy = if (needsFadeLayer) {
+                    CompositingStrategy.Offscreen
+                } else {
+                    CompositingStrategy.Auto
+                }
+            }
             .drawWithContent {
                 drawContent()
+                if (!needsFadeLayer) return@drawWithContent
                 val length = edge.coerceAtMost(size.width / 2f)
                 val travelled = offset.value
                 val startFade = if (overflowing) (minOf(travelled, distance - travelled) / length).coerceIn(0f, 1f) else 0f

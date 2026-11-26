@@ -23,9 +23,15 @@ fun ClockFacePreview(
 ) {
     val data = LocalFaceData.current
     AndroidView(
-        factory = { context -> ClockFaceView(context, face).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO } },
+        factory = { context ->
+            ClockFaceView(context, face).apply {
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                fitToBounds = fit
+            }
+        },
         modifier = if (fit) modifier.fitInside(centered) else modifier,
         update = { view ->
+            view.fitToBounds = fit
             if (view.face != face) view.face = face
             view.data = data
             view.setLargeProgress(largeProgress())

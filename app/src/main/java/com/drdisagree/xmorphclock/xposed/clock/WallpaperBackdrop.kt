@@ -69,6 +69,8 @@ internal class WallpaperBackdrop(private val context: Context) {
     private var measuredThisWake = false
     private val keyguard by lazy { context.getSystemService(KeyguardManager::class.java) }
     private val power by lazy { context.getSystemService(PowerManager::class.java) }
+    private val windowManager by lazy { context.getSystemService(WindowManager::class.java) }
+    private val cachedWallpaperZoom: Float by lazy { computeWallpaperZoom() }
     private val measure = Runnable {
         val target = view?.get()
         if (target != null && target.isShown && isLockscreenVisible()) requestView() else measuredThisWake = false
@@ -267,15 +269,19 @@ internal class WallpaperBackdrop(private val context: Context) {
     private fun hasSize(drawable: Drawable): Boolean = drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0
 
     private fun fitScreen(bitmap: Bitmap): Bitmap {
-        val screen = screenSize()
-        val ratio = max(screen.first.toFloat() / bitmap.width, screen.second.toFloat() / bitmap.height) * FIT_MARGIN
+        val bounds = windowManager?.maximumWindowMetrics?.bounds
+        val sw = max(1, bounds?.width() ?: 1)
+        val sh = max(1, bounds?.height() ?: 1)
+        val ratio = max(sw.toFloat() / bitmap.width, sh.toFloat() / bitmap.height) * FIT_MARGIN
         if (ratio >= 1f) return bitmap
         return bitmap.scale((bitmap.width * ratio).roundToInt().coerceAtLeast(1), (bitmap.height * ratio).roundToInt().coerceAtLeast(1))
     }
 
     private fun updateFrame(target: ClockFaceView) {
         if (bitmapWidth == 0 || bitmapHeight == 0) return
-        val (screenWidth, screenHeight) = screenSize()
+        val bounds = windowManager?.maximumWindowMetrics?.bounds
+        val screenWidth = max(1, bounds?.width() ?: 1)
+        val screenHeight = max(1, bounds?.height() ?: 1)
         target.getLocationOnScreen(location)
         if (screen) {
             val scale = WallpaperCapture.scale
@@ -295,7 +301,7 @@ internal class WallpaperBackdrop(private val context: Context) {
             val top = -view[1] * bitmapHeight * scaleY - location[1]
             frame.set(left, top, left + bitmapWidth * scaleX, top + bitmapHeight * scaleY)
         } else {
-            val zoom = if (live) 1f else wallpaperZoom()
+            val zoom = if (live) 1f else cachedWallpaperZoom
             val scale = max(screenWidth.toFloat() / bitmapWidth, screenHeight.toFloat() / bitmapHeight) * zoom
             val width = bitmapWidth * scale
             val height = bitmapHeight * scale
@@ -316,13 +322,8 @@ internal class WallpaperBackdrop(private val context: Context) {
         target.setBackdropDim(amount, ColorUtils.blendARGB(ScrimTracker.dimTint(), Color.BLACK, share))
     }
 
-    private fun screenSize(): Pair<Int, Int> {
-        val bounds = context.getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds
-        return max(1, bounds?.width() ?: 1) to max(1, bounds?.height() ?: 1)
-    }
-
     @SuppressLint("DiscouragedApi")
-    private fun wallpaperZoom(): Float {
+    private fun computeWallpaperZoom(): Float {
         val resources = Resources.getSystem()
         val id = resources.getIdentifier(MAX_SCALE, DIMEN, ANDROID)
         if (id == 0) return 1f

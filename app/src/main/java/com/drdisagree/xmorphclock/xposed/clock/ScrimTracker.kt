@@ -38,6 +38,7 @@ internal object ScrimTracker {
     private var notificationsView: WeakReference<Any>? = null
     private var revealView: WeakReference<View>? = null
     private val location = IntArray(2)
+    private val scrimRect = Rect()
     private var installed = false
 
     @Volatile
@@ -72,22 +73,38 @@ internal object ScrimTracker {
             }
         }
         HookEnv.findClass(SCRIM_VIEW)?.findMethod(SET_ALPHA) { it.parameterCount == 1 }?.hookAfter { chain, _ ->
-            val owner = controller?.get() ?: return@hookAfter
             val alpha = (chain.args.getOrNull(0) as? Float) ?: return@hookAfter
-            val view = chain.thisObject
+            val view = chain.thisObject ?: return@hookAfter
             when {
-                view === owner.fieldValue(BEHIND) -> {
-                    if (behindView?.get() !== view) behindView = view?.let { WeakReference(it) }
+                view === behindView?.get() -> {
                     if (behindAlpha != alpha) {
                         behindAlpha = alpha
                         dispatch()
                     }
                 }
-                view === owner.fieldValue(NOTIFICATIONS) -> {
-                    if (notificationsView?.get() !== view) notificationsView = view?.let { WeakReference(it) }
+                view === notificationsView?.get() -> {
                     if (notificationsAlpha != alpha) {
                         notificationsAlpha = alpha
                         dispatch()
+                    }
+                }
+                else -> {
+                    val owner = controller?.get() ?: return@hookAfter
+                    when {
+                        view === owner.fieldValue(BEHIND) -> {
+                            behindView = WeakReference(view)
+                            if (behindAlpha != alpha) {
+                                behindAlpha = alpha
+                                dispatch()
+                            }
+                        }
+                        view === owner.fieldValue(NOTIFICATIONS) -> {
+                            notificationsView = WeakReference(view)
+                            if (notificationsAlpha != alpha) {
+                                notificationsAlpha = alpha
+                                dispatch()
+                            }
+                        }
                     }
                 }
             }
@@ -104,7 +121,8 @@ internal object ScrimTracker {
         view.getLocationOnScreen(location)
         val left = location[0] + bounds.left
         val top = location[1] + bounds.top
-        return if (Rect.intersects(area, Rect(left, top, left + bounds.width(), top + bounds.height()))) alpha else 0f
+        scrimRect.set(left, top, left + bounds.width(), top + bounds.height())
+        return if (Rect.intersects(area, scrimRect)) alpha else 0f
     }
 
     fun revealCover(): Float {

@@ -15,12 +15,17 @@ object HookEnv {
     lateinit var classLoader: ClassLoader
         private set
 
+    @Volatile
+    var packageName: String? = null
+        private set
+
     private val classes = ConcurrentHashMap<String, Any>()
     private val missing = Any()
 
-    fun init(module: XposedInterface, classLoader: ClassLoader) {
+    fun init(module: XposedInterface, classLoader: ClassLoader, packageName: String? = null) {
         this.module = module
         this.classLoader = classLoader
+        if (packageName != null) this.packageName = packageName
     }
 
     fun findClass(name: String): Class<*>? {

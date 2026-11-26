@@ -26,6 +26,7 @@ class ClockSlot(
 ) : FrameLayout(context) {
 
     private val location = IntArray(2)
+    private val windowManager by lazy { context.getSystemService(WindowManager::class.java) }
 
     init {
         layoutParams = ViewGroup.LayoutParams(
@@ -104,8 +105,8 @@ class ClockSlot(
     }
 
     private fun frameNow(): ClockFrame? {
-        if (ClockSignals.isAsleep || isEmpty() || width <= 0 || !isShown || !atRest()) return null
-        val bounds = context.getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds ?: return null
+        if (!isShown || isEmpty() || width <= 0 || ClockSignals.isAsleep || !atRest()) return null
+        val bounds = windowManager?.maximumWindowMetrics?.bounds ?: return null
         if (bounds.width() <= 0 || bounds.height() <= 0) return null
         getLocationOnScreen(location)
         if (capWidth && abs(location[0] + width / 2f - bounds.exactCenterX()) > bounds.width() * OFF_CENTER) return null

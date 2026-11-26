@@ -21,30 +21,53 @@ object FaceComposer {
 
     fun isClockLayer(layerId: String): Boolean = itemOf(layerId) == null
 
-    fun clockOnly(face: ClockFace): ClockFace {
+    fun clockOnly(face: ClockFace, resetVerticalOffset: Boolean = false): ClockFace {
         val clockLayers = face.layers.filter { isClockLayer(it.id) }
-        if (clockLayers.size == face.layers.size) return face
+        val hasWidgets = clockLayers.size != face.layers.size
+        if (!hasWidgets && !resetVerticalOffset) return face
 
         fun findClockChild(root: FaceNode?): FaceNode? {
             if (root == null) return null
             if (root is StackNode) {
-                val matching = root.children.firstOrNull { node ->
-                    val first = firstLayer(node) ?: return@firstOrNull false
-                    isClockLayer(first)
+                val hasNonClockSibling = root.children.any { node ->
+                    val first = firstLayer(node)
+                    first != null && !isClockLayer(first)
                 }
-                if (matching != null) return matching
+                if (hasNonClockSibling) {
+                    val matching = root.children.firstOrNull { node ->
+                        val first = firstLayer(node) ?: return@firstOrNull false
+                        isClockLayer(first)
+                    }
+                    if (matching != null) return matching
+                } else if (
+                    root.children.size == 1 &&
+                    root.width == null &&
+                    root.height == null &&
+                    root.placement == FacePlacement()
+                ) {
+                    return root.children[0]
+                }
             }
             return root
         }
 
-        val largeNode = findClockChild(face.large) ?: face.large
-        val smallNode = findClockChild(face.small) ?: face.small
+        fun normalize(node: FaceNode?): FaceNode? {
+            val child = findClockChild(node) ?: return null
+            return if (resetVerticalOffset && child.placement.y != 0f) {
+                placed(child, child.placement.copy(y = 0f))
+            } else {
+                child
+            }
+        }
+
+        val largeNode = normalize(face.large) ?: face.large
+        val smallNode = normalize(face.small) ?: face.small
         return face.copy(
             layers = clockLayers,
             large = largeNode,
             small = smallNode,
-            aodLarge = findClockChild(face.aodLarge),
-            aodSmall = findClockChild(face.aodSmall)
+            aodLarge = normalize(face.aodLarge),
+            aodSmall = normalize(face.aodSmall)
         )
     }
 

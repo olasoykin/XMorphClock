@@ -19,6 +19,7 @@ import com.drdisagree.xmorphclock.engine.render.FontAxes
 import com.drdisagree.xmorphclock.engine.render.Request
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 @SuppressLint("StaticFieldLeak")
@@ -50,12 +51,14 @@ object FaceFont {
         }
     }
 
-    private val cache = HashMap<String, Typeface>()
-    private val bundledBases = HashMap<String, Font>()
-    private val weightAxes = HashMap<String, Boolean>()
-    private val userBases = HashMap<String, Font>()
-    private val userAxes = HashMap<String, Set<String>>()
-    private val userMisses = HashMap<String, Long>()
+    private data class FontKey(val font: String, val weight: Int, val width: Int, val height: Int)
+
+    private val cache = ConcurrentHashMap<FontKey, Typeface>()
+    private val bundledBases = ConcurrentHashMap<String, Font>()
+    private val weightAxes = ConcurrentHashMap<String, Boolean>()
+    private val userBases = ConcurrentHashMap<String, Font>()
+    private val userAxes = ConcurrentHashMap<String, Set<String>>()
+    private val userMisses = ConcurrentHashMap<String, Long>()
 
     @Volatile
     private var userFonts: ((String) -> ParcelFileDescriptor?)? = null
@@ -98,7 +101,7 @@ object FaceFont {
         UserFont.idOf(font)?.let { return WEIGHT_AXIS in userAxesOf(it) }
         if (!font.startsWith(BundledFonts.SCHEME)) return false
         val name = font.removePrefix(BundledFonts.SCHEME).substringBefore(AXES_SEPARATOR)
-        synchronized(weightAxes) { weightAxes[name] }?.let { return it }
+        weightAxes[name]?.let { return it }
         val context = fontContext ?: return false
         val id = BundledFonts.ids[name] ?: return false
         val found = try {
@@ -106,23 +109,23 @@ object FaceFont {
         } catch (_: Exception) {
             false
         }
-        return synchronized(weightAxes) { weightAxes.getOrPut(name) { found } }
+        return weightAxes.putIfAbsent(name, found) ?: found
     }
 
     fun typeface(font: String, weight: Int, width: Int, height: Int): Typeface {
         val wght = quantize(weight, WEIGHT_STEP)
         val wdth = quantize(width, WIDTH_STEP)
         val ytfi = quantize(height, HEIGHT_STEP)
-        val key = "$font|$wght|$wdth|$ytfi"
+        val key = FontKey(font, wght, wdth, ytfi)
 
-        synchronized(cache) { cache[key] }?.let { return it }
+        cache[key]?.let { return it }
         val typeface = when {
             font.isEmpty() -> flexTypeface(wght, wdth, ytfi)
             font.startsWith(UserFont.SCHEME) -> userTypeface(font, wght, wdth) ?: return Typeface.create(Typeface.DEFAULT, wght, false)
             font.startsWith(BundledFonts.SCHEME) -> bundledTypeface(font, wght, wdth)
             else -> fileTypeface(font, wght)
         }
-        return synchronized(cache) { cache.getOrPut(key) { typeface } }
+        return cache.putIfAbsent(key, typeface) ?: typeface
     }
 
     fun prewarm(face: ClockFace) {
@@ -186,22 +189,24 @@ object FaceFont {
         val name = spec.substringBefore(AXES_SEPARATOR)
         val context = fontContext ?: return Typeface.create(Typeface.DEFAULT, weight, false)
         val id = BundledFonts.ids[name] ?: return Typeface.create(Typeface.DEFAULT, weight, false)
-        val extras = spec.substringAfter(AXES_SEPARATOR, "")
-            .split(AXIS_JOIN)
-            .mapNotNull { pair ->
-                val tag = pair.substringBefore(AXIS_ASSIGN).trim()
-                val value = pair.substringAfter(AXIS_ASSIGN, "").toFloatOrNull()
-                if (tag.length == AXIS_TAG_LENGTH && value != null) "'$tag' $value" else null
-            }
-        val settings = buildList {
-            add("'wght' $weight")
-            if (name in BundledFonts.widthAxis) add("'wdth' $width")
-            addAll(extras)
-        }.joinToString(", ")
+        val settings = if (AXES_SEPARATOR !in spec) {
+            if (name in BundledFonts.widthAxis) "'wght' $weight, 'wdth' $width" else "'wght' $weight"
+        } else {
+            val extras = spec.substringAfter(AXES_SEPARATOR, "")
+                .split(AXIS_JOIN)
+                .mapNotNull { pair ->
+                    val tag = pair.substringBefore(AXIS_ASSIGN).trim()
+                    val value = pair.substringAfter(AXIS_ASSIGN, "").toFloatOrNull()
+                    if (tag.length == AXIS_TAG_LENGTH && value != null) "'$tag' $value" else null
+                }
+            buildList {
+                add("'wght' $weight")
+                if (name in BundledFonts.widthAxis) add("'wdth' $width")
+                addAll(extras)
+            }.joinToString(", ")
+        }
         return try {
-            val base = synchronized(bundledBases) {
-                bundledBases.getOrPut(name) { Font.Builder(context.resources, id).build() }
-            }
+            val base = bundledBases.getOrPut(name) { Font.Builder(context.resources, id).build() }
             val variant = try {
                 Font.Builder(base).setFontVariationSettings(settings).build()
             } catch (_: Exception) {
@@ -217,8 +222,8 @@ object FaceFont {
 
     private fun userTypeface(font: String, weight: Int, width: Int): Typeface? {
         val id = UserFont.idOf(font) ?: return null
-        val base = synchronized(userBases) { userBases[id] } ?: loadUser(id)?.also { loaded ->
-            synchronized(userBases) { userBases.getOrPut(id) { loaded } }
+        val base = userBases[id] ?: loadUser(id)?.let { loaded ->
+            userBases.putIfAbsent(id, loaded) ?: loaded
         } ?: return null
         val axes = userAxesOf(id)
         val settings = buildList {
@@ -247,21 +252,21 @@ object FaceFont {
     }
 
     private fun userAxesOf(id: String): Set<String> {
-        synchronized(userAxes) { userAxes[id] }?.let { return it }
+        userAxes[id]?.let { return it }
         val descriptor = openUser(id) ?: return emptySet()
         val axes = ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { FontAxes.axes(it) }
-        return synchronized(userAxes) { userAxes.getOrPut(id) { axes } }
+        return userAxes.putIfAbsent(id, axes) ?: axes
     }
 
     private fun openUser(id: String): ParcelFileDescriptor? {
         val now = SystemClock.uptimeMillis()
-        synchronized(userMisses) { userMisses[id] }?.let { if (now - it < RETRY_MS) return null }
+        userMisses[id]?.let { if (now - it < RETRY_MS) return null }
         val descriptor = try {
             userFonts?.invoke(id)
         } catch (_: Exception) {
             null
         }
-        synchronized(userMisses) { if (descriptor == null) userMisses[id] = now else userMisses.remove(id) }
+        if (descriptor == null) userMisses[id] = now else userMisses.remove(id)
         return descriptor
     }
 

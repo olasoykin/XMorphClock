@@ -6,9 +6,10 @@ import android.view.ViewGroup
 import android.widget.TextClock
 import com.drdisagree.xmorphclock.xposed.hook.callMethod
 import com.drdisagree.xmorphclock.xposed.hook.fieldValue
-import com.drdisagree.xmorphclock.xposed.hook.findMethod
+import com.drdisagree.xmorphclock.xposed.hook.findZeroArgMethod
 import com.drdisagree.xmorphclock.xposed.preview.PreviewClockSlot
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 
 internal object PreviewTargetScanner {
 
@@ -98,8 +99,16 @@ internal object PreviewTargetScanner {
         val allTargets: Set<View> = largeViews + smallViews + extraViews
     }
 
+    private class PackageIds(
+        val largeId: Int,
+        val smallId: Int,
+        val extraIds: Set<Int>
+    )
+
     private val hiddenViews = WeakHashMap<View, HiddenState>()
     private val entryNameCache = HashMap<Int, String>()
+    private val packageIdCache = ConcurrentHashMap<String, PackageIds>()
+    private val stockClassCache = ConcurrentHashMap<Class<*>, Boolean>()
 
     fun clearHiddenState(view: View) {
         hiddenViews.remove(view)
@@ -136,28 +145,41 @@ internal object PreviewTargetScanner {
 
         collectFromControllers(viewModel, renderer, topRoot, largeViews, smallViews)
 
-        val largeId = resolveResourceId(topRoot, LARGE_CLOCK_ID)
-        val smallId = resolveResourceId(topRoot, SMALL_CLOCK_ID)
-        val extraIds = EXTRA_ENTRY_NAMES.mapNotNull { name ->
-            resolveResourceId(topRoot, name).takeIf { it != 0 }
-        }.toSet()
-
+        val pkgIds = resolvePackageIds(topRoot)
         collectDescendants(
             group = topRoot,
-            largeId = largeId,
-            smallId = smallId,
-            extraIds = extraIds,
+            largeId = pkgIds.largeId,
+            smallId = pkgIds.smallId,
+            extraIds = pkgIds.extraIds,
             protectedAncestors = protectedAncestors,
             largeOut = largeViews,
             smallOut = smallViews,
             extraOut = extraViews
         )
 
-        return ScanResult(
-            largeViews = largeViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors },
-            smallViews = smallViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors },
-            extraViews = extraViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors }
+        return if (protectedAncestors.isEmpty()) {
+            ScanResult(largeViews, smallViews, extraViews)
+        } else {
+            ScanResult(
+                largeViews = largeViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors },
+                smallViews = smallViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors },
+                extraViews = extraViews.filterNotTo(LinkedHashSet()) { it in protectedAncestors }
+            )
+        }
+    }
+
+    private fun resolvePackageIds(root: ViewGroup): PackageIds {
+        val pkg = root.context.packageName
+        packageIdCache[pkg]?.let { return it }
+        val resolved = PackageIds(
+            largeId = resolveResourceId(root, LARGE_CLOCK_ID),
+            smallId = resolveResourceId(root, SMALL_CLOCK_ID),
+            extraIds = EXTRA_ENTRY_NAMES.mapNotNull { name ->
+                resolveResourceId(root, name).takeIf { it != 0 }
+            }.toHashSet()
         )
+        packageIdCache.putIfAbsent(pkg, resolved)
+        return resolved
     }
 
     fun inferIsLarge(
@@ -422,34 +444,42 @@ internal object PreviewTargetScanner {
 
     private fun isStockClockOrExtraClass(view: View): Boolean {
         if (view is TextClock) return true
-        var cls: Class<*>? = view.javaClass
+        val viewClass = view.javaClass
+        stockClassCache[viewClass]?.let { return it }
+        var matched = false
+        var cls: Class<*>? = viewClass
         while (cls != null && cls != ViewGroup::class.java && cls != View::class.java) {
             val className = cls.name
-            if (className.contains("PreviewClockSlot") || className.contains("ClockFaceView")) return false
-            if (EXTRA_CLASS_PREFIXES.any { className.startsWith(it) }) return true
-            if (className.contains("Clock", ignoreCase = true) ||
+            if (className.contains("PreviewClockSlot") || className.contains("ClockFaceView")) {
+                matched = false
+                break
+            }
+            if (EXTRA_CLASS_PREFIXES.any { className.startsWith(it) } ||
+                className.contains("Clock", ignoreCase = true) ||
                 className.contains("Smartspace", ignoreCase = true) ||
                 className.contains("KeyguardSlice", ignoreCase = true) ||
                 className.contains("DateView", ignoreCase = true)
             ) {
-                return true
+                matched = true
+                break
             }
             cls = cls.superclass
         }
-        return false
+        stockClassCache.putIfAbsent(viewClass, matched)
+        return matched
     }
 
     private fun readFlowValue(target: Any, name: String): Any? {
         val getterName = "get" + name.replaceFirstChar { it.uppercase() }
         val flow = target.callMethod(getterName) ?: target.fieldValue(name) ?: return null
-        val valueMethod = flow.javaClass.findMethod("getValue") { it.parameterCount == 0 }
+        val valueMethod = flow.javaClass.findZeroArgMethod("getValue")
         if (valueMethod != null) {
-            return runCatching { valueMethod.invoke(flow) }.getOrNull()
+            return try { valueMethod.invoke(flow) } catch (_: Throwable) { null }
         }
         val delegate = flow.fieldValue("\$\$delegate_0")
-        val delegateGetter = delegate?.javaClass?.findMethod("getValue") { it.parameterCount == 0 }
+        val delegateGetter = delegate?.javaClass?.findZeroArgMethod("getValue")
         if (delegateGetter != null) {
-            return runCatching { delegateGetter.invoke(delegate) }.getOrNull()
+            return try { delegateGetter.invoke(delegate) } catch (_: Throwable) { null }
         }
         return null
     }

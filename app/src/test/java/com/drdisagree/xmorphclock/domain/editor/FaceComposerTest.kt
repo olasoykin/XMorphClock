@@ -195,6 +195,35 @@ class FaceComposerTest {
         assertSame(clock, FaceComposer.clockOnly(clock))
     }
 
+    @Test
+    fun clockOnlyResetsVerticalOffsetWithoutBreakingStackPresets() {
+        val stackClock = load(CLOCK_DIR).first { node ->
+            val root = node.large
+            root is StackNode && root.children.size > 1
+        }
+        val composedLoneMoved = FaceComposer.compose(
+            ComposedFaces(
+                stackClock,
+                emptyMap(),
+                Composition(
+                    listOf(
+                        CompositionItem(
+                            id = 0,
+                            clock = true,
+                            large = FacePlacement(0.5f, -0.32f, FaceAlign.CENTER),
+                            small = FacePlacement(0.0225f, -0.15f, FaceAlign.START)
+                        )
+                    )
+                )
+            )
+        )
+        val previewFace = FaceComposer.clockOnly(composedLoneMoved, resetVerticalOffset = true)
+        assertEquals(0f, previewFace.large.placement.y, 1e-5f)
+        assertEquals(0f, previewFace.small.placement.y, 1e-5f)
+        assertTrue(previewFace.large is StackNode)
+        assertEquals((stackClock.large as StackNode).children.size, (previewFace.large as StackNode).children.size)
+    }
+
     private companion object {
         const val CLOCK_DIR = "src/main/assets/clock_faces"
         const val WEATHER_DIR = "src/main/assets/weather_faces"

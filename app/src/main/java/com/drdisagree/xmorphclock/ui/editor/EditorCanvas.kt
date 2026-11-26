@@ -65,7 +65,7 @@ import com.drdisagree.xmorphclock.ui.components.LocalClockGeometry
 import com.drdisagree.xmorphclock.ui.components.LocalDepth
 import com.drdisagree.xmorphclock.ui.components.LocalFaceData
 import com.drdisagree.xmorphclock.ui.components.LocalWallpaper
-import com.drdisagree.xmorphclock.ui.components.backdropFrame
+import com.drdisagree.xmorphclock.ui.components.backdropFrameInto
 import com.drdisagree.xmorphclock.ui.components.clockFrame
 import com.drdisagree.xmorphclock.ui.theme.Accent
 import com.drdisagree.xmorphclock.ui.theme.DarkPalette
@@ -175,11 +175,13 @@ fun EditorCanvas(
             }
         }
 
+        val inkColor = Ink
+        val fallbackBrush = remember(inkColor) { Brush.verticalGradient(listOf(Color(0xFF1C2333), inkColor)) }
         Box(Modifier.fillMaxSize()) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(Color(0xFF1C2333), Ink)))
+                    .background(fallbackBrush)
             )
             if (wallpaper != null) {
                 Image(wallpaper, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -192,6 +194,26 @@ fun EditorCanvas(
         }
 
         val data = LocalFaceData.current
+        val bitmap = remember(wallpaper) { wallpaper?.asAndroidBitmap() }
+        val backdropRect = remember { RectF() }
+        val editorStrokes = remember(density) {
+            with(density) {
+                EditorDrawCache(
+                    ghostStroke = Stroke(GHOST_WIDTH.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(GHOST_DASH.toPx(), GHOST_DASH.toPx()))),
+                    idleStroke = Stroke(IDLE_WIDTH.toPx()),
+                    borderStroke = Stroke(1.5.dp.toPx()),
+                    checkStroke = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    handleStroke = Stroke(HANDLE_WIDTH.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    padPx = 6.dp.toPx(),
+                    frameRadiusPx = FRAME_RADIUS.toPx(),
+                    checkRadiusPx = CHECK_RADIUS.toPx(),
+                    handleReachPx = HANDLE_REACH.toPx(),
+                    guideWidthPx = 1.dp.toPx()
+                )
+            }
+        }
+        val tickPath = remember { Path() }
+        val handlePath = remember { Path() }
         AndroidView(
             factory = { context -> ClockFaceView(context, face).also { view = it } },
             modifier = Modifier.clockFrame(geometry) { large },
@@ -201,14 +223,13 @@ fun EditorCanvas(
                 clock.setLargeProgress(large)
                 clock.setSleepProgress(sleep)
                 clock.setAodProgress(sleep)
-                val bitmap = wallpaper?.asAndroidBitmap()
                 if (clock.tag !== bitmap) {
                     clock.tag = bitmap
                     clock.setBackdrop(bitmap)
                 }
                 clock.setDepth(depth?.bitmap, depth?.opacity ?: 0f, depth?.widgetsFront == true)
                 if (bitmap != null) {
-                    clock.setBackdropFrame(backdropFrame(bitmap, widthPx, heightPx, geometry, large))
+                    clock.setBackdropFrame(backdropFrameInto(bitmap, widthPx, heightPx, geometry, large, backdropRect))
                 }
             }
         )
@@ -421,10 +442,9 @@ fun EditorCanvas(
         ) {
             tick
             val all = boxesOf(view, insetPx, topPx)
+            val pad = editorStrokes.padPx
+            val frameRadiusPx = editorStrokes.frameRadiusPx
             if (guideAlpha > 0f) {
-                val ghostStroke = Stroke(GHOST_WIDTH.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(GHOST_DASH.toPx(), GHOST_DASH.toPx())))
-                val idleStroke = Stroke(IDLE_WIDTH.toPx())
-                val pad = 6.dp.toPx()
                 outlinesOf(all, hiddenOf(view), currentSelected).forEach { (box, ghost) ->
                     val width = box.width() + pad * 2f
                     val height = box.height() + pad * 2f
@@ -432,14 +452,13 @@ fun EditorCanvas(
                         color = Color.White.copy(alpha = (if (ghost) GHOST_ALPHA else IDLE_ALPHA) * guideAlpha),
                         topLeft = Offset(box.left - pad, box.top - pad),
                         size = Size(width, height),
-                        cornerRadius = CornerRadius(minOf(FRAME_RADIUS.toPx(), minOf(width, height) * CORNER_RATIO)),
-                        style = if (ghost) ghostStroke else idleStroke
+                        cornerRadius = CornerRadius(minOf(frameRadiusPx, minOf(width, height) * CORNER_RATIO)),
+                        style = if (ghost) editorStrokes.ghostStroke else editorStrokes.idleStroke
                     )
                 }
             }
             grouping?.let { picked ->
-                val pad = 6.dp.toPx()
-                val radius = CHECK_RADIUS.toPx()
+                val radius = editorStrokes.checkRadiusPx
                 all.keys.map { ItemGroups.keyOf(it) }.distinct().filter { ItemGroups.itemId(it) != null }.forEach { key ->
                     val box = rectOf(all, key) ?: return@forEach
                     val chosen = key in picked
@@ -449,59 +468,59 @@ fun EditorCanvas(
                             color = accent,
                             topLeft = Offset(box.left - pad, box.top - pad),
                             size = Size(box.width() + pad * 2f, box.height() + pad * 2f),
-                            cornerRadius = CornerRadius(FRAME_RADIUS.toPx()),
-                            style = Stroke(1.5.dp.toPx())
+                            cornerRadius = CornerRadius(frameRadiusPx),
+                            style = editorStrokes.borderStroke
                         )
                     }
                     drawCircle(if (chosen) accent else Color.Black.copy(alpha = CHECK_FILL), radius, center)
-                    drawCircle(if (chosen) accent else Color.White.copy(alpha = CHECK_RING), radius, center, style = Stroke(1.5.dp.toPx()))
+                    drawCircle(if (chosen) accent else Color.White.copy(alpha = CHECK_RING), radius, center, style = editorStrokes.borderStroke)
                     if (chosen) {
-                        val tick = Path().apply {
+                        tickPath.apply {
+                            rewind()
                             moveTo(center.x - radius * 0.42f, center.y + radius * 0.02f)
                             lineTo(center.x - radius * 0.1f, center.y + radius * 0.34f)
                             lineTo(center.x + radius * 0.45f, center.y - radius * 0.3f)
                         }
-                        drawPath(tick, Color.White, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                        drawPath(tickPath, Color.White, style = editorStrokes.checkStroke)
                     }
                 }
             }
             val rect = if (grouping != null) null else rectOf(all, currentSelected)
             if (rect != null) {
-                val pad = 6.dp.toPx()
-                val radius = FRAME_RADIUS.toPx()
                 val left = rect.left - pad
                 val top = rect.top - pad
                 val right = rect.right + pad
                 val bottom = rect.bottom + pad
-                val corner = radius.coerceAtMost(minOf(right - left, bottom - top) / 2f)
+                val corner = frameRadiusPx.coerceAtMost(minOf(right - left, bottom - top) / 2f)
                 drawRoundRect(
                     color = Color.White.copy(alpha = 0.9f),
                     topLeft = Offset(left, top),
                     size = Size(right - left, bottom - top),
                     cornerRadius = CornerRadius(corner),
-                    style = Stroke(1.5.dp.toPx())
+                    style = editorStrokes.borderStroke
                 )
-                val reach = HANDLE_REACH.toPx().coerceAtMost(minOf(right - left, bottom - top) / 2f - corner).coerceAtLeast(0f)
-                val handle = Path().apply {
+                val reach = editorStrokes.handleReachPx.coerceAtMost(minOf(right - left, bottom - top) / 2f - corner).coerceAtLeast(0f)
+                handlePath.apply {
+                    rewind()
                     moveTo(right, bottom - corner - reach)
                     lineTo(right, bottom - corner)
                     arcTo(Rect(right - corner * 2f, bottom - corner * 2f, right, bottom), 0f, 90f, false)
                     lineTo(right - corner - reach, bottom)
                 }
                 drawPath(
-                    handle,
+                    handlePath,
                     Color.White,
-                    style = Stroke(HANDLE_WIDTH.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    style = editorStrokes.handleStroke
                 )
             }
             val clockWidth = (view?.width ?: 0).toFloat()
             if (guideAlpha > 0f) guides.guideX?.let { x ->
                 val px = insetPx + x * clockWidth
-                drawLine(accent.copy(alpha = guideAlpha), Offset(px, 0f), Offset(px, size.height), 1.dp.toPx())
+                drawLine(accent.copy(alpha = guideAlpha), Offset(px, 0f), Offset(px, size.height), editorStrokes.guideWidthPx)
             }
             if (guideAlpha > 0f) guides.guideY?.let { y ->
                 val py = topPx + y * clockWidth
-                drawLine(accent.copy(alpha = guideAlpha), Offset(0f, py), Offset(size.width, py), 1.dp.toPx())
+                drawLine(accent.copy(alpha = guideAlpha), Offset(0f, py), Offset(size.width, py), editorStrokes.guideWidthPx)
             }
         }
         val removable = selectedId?.takeIf(canRemove)
@@ -628,3 +647,16 @@ private val HANDLE_REACH = 3.dp
 private val HANDLE_WIDTH = 5.dp
 
 private const val SYMBOL_FONT = "res:symbols"
+
+private class EditorDrawCache(
+    val ghostStroke: Stroke,
+    val idleStroke: Stroke,
+    val borderStroke: Stroke,
+    val checkStroke: Stroke,
+    val handleStroke: Stroke,
+    val padPx: Float,
+    val frameRadiusPx: Float,
+    val checkRadiusPx: Float,
+    val handleReachPx: Float,
+    val guideWidthPx: Float
+)

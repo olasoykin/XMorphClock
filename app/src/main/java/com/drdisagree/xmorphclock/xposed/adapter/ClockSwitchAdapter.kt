@@ -79,6 +79,14 @@ class ClockSwitchAdapter : ClockAdapter {
             active = true
             HookReporter.adapter(name)
         }
+        if (small.clipChildren) small.clipChildren = false
+        if (small.clipToPadding) small.clipToPadding = false
+        if (view.clipChildren) view.clipChildren = false
+        if (view.clipToPadding) view.clipToPadding = false
+        (view.parent as? ViewGroup)?.let { parent ->
+            if (parent.clipChildren) parent.clipChildren = false
+            if (parent.clipToPadding) parent.clipToPadding = false
+        }
         var changed = placeSlot(host, small, state)
         changed = fitFrame(small, state) || changed
         changed = hideStock(small, state) || changed

@@ -50,19 +50,33 @@ internal object GlyphFieldBuilder {
         mask.recycle()
         val count = width * height
         val coverage = FloatArray(count)
+        val inside = FloatArray(count)
+        val outside = FloatArray(count)
         for (y in 0 until height) {
-            for (x in 0 until width) coverage[y * width + x] = (pixels[y * stride + x].toInt() and 0xFF) / LEVELS
+            val row = y * width
+            val strideRow = y * stride
+            for (x in 0 until width) {
+                val byteVal = pixels[strideRow + x].toInt() and 0xFF
+                val idx = row + x
+                coverage[idx] = byteVal / LEVELS
+                if (byteVal >= INSIDE) {
+                    inside[idx] = FAR
+                    outside[idx] = 0f
+                } else {
+                    inside[idx] = 0f
+                    outside[idx] = FAR
+                }
+            }
         }
-        val inside = FloatArray(count) { if (coverage[it] * LEVELS >= INSIDE) FAR else 0f }
-        val outside = FloatArray(count) { if (coverage[it] * LEVELS >= INSIDE) 0f else FAR }
         transform(inside, width, height)
         transform(outside, width, height)
-        val field = FloatArray(count) {
-            val cover = coverage[it]
-            when {
+        val field = FloatArray(count)
+        for (i in 0 until count) {
+            val cover = coverage[i]
+            field[i] = when {
                 cover > 0f && cover < 1f -> cover - HALF
-                inside[it] > 0f -> sqrt(inside[it]) - HALF
-                else -> HALF - sqrt(outside[it])
+                inside[i] > 0f -> sqrt(inside[i]) - HALF
+                else -> HALF - sqrt(outside[i])
             }
         }
         val scratch = FloatArray(count)
@@ -112,20 +126,33 @@ internal object GlyphFieldBuilder {
     }
 
     private fun smooth(source: FloatArray, target: FloatArray, width: Int, height: Int, horizontal: Boolean) {
-        val lines = if (horizontal) height else width
-        val length = if (horizontal) width else height
         val window = SMOOTH_RADIUS * 2 + 1
-        for (line in 0 until lines) {
-            fun at(position: Int): Float {
-                val p = position.coerceIn(0, length - 1)
-                return if (horizontal) source[line * width + p] else source[p * width + line]
+        if (horizontal) {
+            val maxX = width - 1
+            for (y in 0 until height) {
+                val row = y * width
+                var sum = 0f
+                for (offset in -SMOOTH_RADIUS..SMOOTH_RADIUS) {
+                    sum += source[row + offset.coerceIn(0, maxX)]
+                }
+                for (x in 0 until width) {
+                    target[row + x] = sum / window
+                    sum += source[row + (x + SMOOTH_RADIUS + 1).coerceIn(0, maxX)] -
+                        source[row + (x - SMOOTH_RADIUS).coerceIn(0, maxX)]
+                }
             }
-            var sum = 0f
-            for (offset in -SMOOTH_RADIUS..SMOOTH_RADIUS) sum += at(offset)
-            for (position in 0 until length) {
-                val index = if (horizontal) line * width + position else position * width + line
-                target[index] = sum / window
-                sum += at(position + SMOOTH_RADIUS + 1) - at(position - SMOOTH_RADIUS)
+        } else {
+            val maxY = height - 1
+            for (x in 0 until width) {
+                var sum = 0f
+                for (offset in -SMOOTH_RADIUS..SMOOTH_RADIUS) {
+                    sum += source[offset.coerceIn(0, maxY) * width + x]
+                }
+                for (y in 0 until height) {
+                    target[y * width + x] = sum / window
+                    sum += source[(y + SMOOTH_RADIUS + 1).coerceIn(0, maxY) * width + x] -
+                        source[(y - SMOOTH_RADIUS).coerceIn(0, maxY) * width + x]
+                }
             }
         }
     }
