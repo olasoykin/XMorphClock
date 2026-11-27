@@ -117,6 +117,8 @@ import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.EditScope
 import com.drdisagree.xmorphclock.domain.model.ElementKind
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
+import com.drdisagree.xmorphclock.domain.model.FaceKind
+import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.FacePreset
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
@@ -600,8 +602,25 @@ fun HomeScreen(
                                 onSheetTap = { sheetUp = !sheetUp }
                             )
                         } else {
+                            val selectedClockStyle = if (state.composition.clockItem != null) state.clockPreset?.style else null
                             TargetCustomizationSheet(
-                                state = state,
+                                target = state.activeTarget,
+                                presetName = state.clockPreset?.face?.name,
+                                canEditClock = state.clockPreset != null,
+                                clockItemId = state.composition.clockItem?.id,
+                                selectedClockStyle = selectedClockStyle,
+                                widgetStyles = state.composition.widgetStyles,
+                                faces = state.faces,
+                                presetPreviews = state.presetPreviews,
+                                gridWidgets = state.gridWidgets,
+                                inlineWidgets = state.inlineWidgets,
+                                gridCellsUsed = state.gridCellsUsed,
+                                gridCapacity = state.composition.gridCapacity,
+                                selectedItem = state.selectedItem,
+                                availableAffordances = state.availableAffordances,
+                                shortcutLeft = state.shortcutLeft,
+                                shortcutRight = state.shortcutRight,
+                                activeShortcutSlot = state.activeShortcutSlot,
                                 expanded = facesExpanded,
                                 onExpandedChange = { facesExpanded = it },
                                 onDismissSheet = { viewModel.onTargetSelected(null) },
@@ -720,22 +739,24 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                 sleepAnim.value == (if (state.previewMode == PreviewMode.AOD) 1f else 0f)
         }
     }
-    var extents by remember { mutableStateOf(emptyMap<String, RectF>()) }
+    val extentsState = remember { mutableStateOf<Map<String, RectF>>(emptyMap()) }
     val gridIds = remember(state.gridWidgets) { state.gridWidgets.mapTo(HashSet()) { it.id } }
     val inlineIds = remember(state.inlineWidgets) { state.inlineWidgets.mapTo(HashSet()) { it.id } }
+    val isClockAnalog = state.clockPreset?.face?.isAnalog == true || state.preview?.isAnalog == true
+    val clockPlacement = state.clockPlacement(itemState)
 
     LockscreenPreview(
         face = state.preview,
         modifier = Modifier.fillMaxSize(),
         largeProgress = { largeAnim.value },
         sleepProgress = { sleepAnim.value },
-        onExtents = { extents = it },
+        onExtents = { extentsState.value = it },
         animateChanges = !state.dragging,
         overlay = {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val frame = geometry.frame(largeAnim.value)
                 ItemOverlay(
-                    extents = extents,
+                    extents = extentsState.value,
                     composition = state.composition,
                     itemState = itemState,
                     gridWidgetIds = gridIds,
@@ -745,6 +766,8 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                     shortcutLeft = state.shortcutLeft,
                     shortcutRight = state.shortcutRight,
                     isAod = state.previewMode == PreviewMode.AOD,
+                    isClockAnalog = isClockAnalog,
+                    clockPlacement = clockPlacement,
                     unit = constraints.maxWidth * frame.width,
                     frameLeft = constraints.maxWidth * frame.left,
                     frameTop = constraints.maxHeight * frame.top,
@@ -1033,7 +1056,23 @@ private fun TopBar(
 
 @Composable
 private fun TargetCustomizationSheet(
-    state: HomeUiState,
+    target: LockTarget?,
+    presetName: String?,
+    canEditClock: Boolean,
+    clockItemId: Int?,
+    selectedClockStyle: Int?,
+    widgetStyles: Set<Int>,
+    faces: Map<FaceKind, List<FacePreset>>,
+    presetPreviews: Map<Int, ClockFace>,
+    gridWidgets: List<CompositionItem>,
+    inlineWidgets: List<CompositionItem>,
+    gridCellsUsed: Int,
+    gridCapacity: Int,
+    selectedItem: Int?,
+    availableAffordances: List<LockscreenAffordance>,
+    shortcutLeft: LockscreenAffordance,
+    shortcutRight: LockscreenAffordance,
+    activeShortcutSlot: ShortcutSlot,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onDismissSheet: () -> Unit,
@@ -1045,9 +1084,38 @@ private fun TargetCustomizationSheet(
     onShortcutSlotSelected: (ShortcutSlot) -> Unit,
     onShortcutSelected: (ShortcutSlot, String) -> Unit
 ) {
-    val target = state.activeTarget ?: return
+    val activeTarget = target ?: return
     val density = LocalDensity.current
     val threshold = with(density) { DRAG_THRESHOLD.toPx() }
+    val faceMap = remember(faces) {
+        buildMap {
+            faces.values.forEach { list ->
+                list.forEach { preset -> put(preset.style, preset.face) }
+            }
+        }
+    }
+    val clockSections = remember(faces) {
+        val allClocks = faces[FaceKind.CLOCK].orEmpty()
+        val mine = allClocks.filter { FaceKind.CLOCK.isMine(it.style) }
+        val library = allClocks.filterNot { FaceKind.CLOCK.isMine(it.style) }
+        sectionsOf(if (mine.isEmpty()) library else mine + library)
+    }
+    val allWidgets = remember(faces) {
+        faces[FaceKind.WIDGET].orEmpty().filterNot { FaceKind.WIDGET.isMine(it.style) } +
+            faces[FaceKind.WEATHER].orEmpty().filterNot { FaceKind.WEATHER.isMine(it.style) }
+    }
+    val gridSections = remember(allWidgets) {
+        sectionsOf(allWidgets.filter { WidgetGrids.zoneOf(it.face) == WidgetZone.GRID_1X4 })
+    }
+    val inlineSections = remember(allWidgets) {
+        sectionsOf(allWidgets.filter { WidgetGrids.zoneOf(it.face) == WidgetZone.INLINE_1X2 })
+    }
+    val gridSlots = remember(gridWidgets, faceMap) {
+        gridWidgets.map { PlacedWidgetSlot(it.id, faceMap[it.style]?.name) }
+    }
+    val inlineSlots = remember(inlineWidgets, faceMap) {
+        inlineWidgets.map { PlacedWidgetSlot(it.id, faceMap[it.style]?.name) }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Column(
@@ -1090,37 +1158,37 @@ private fun TargetCustomizationSheet(
             }
 
             AnimatedContent(
-                targetState = target,
+                targetState = activeTarget,
                 transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(140)) },
                 label = "sheetHeader"
             ) { current ->
                 when (current) {
                     LockTarget.CLOCK -> ClockSheetHeader(
-                        presetName = state.clockPreset?.face?.name,
-                        canEdit = state.clockPreset != null,
-                        onFontAndColor = { onEditItem(state.composition.clockItem?.id) }
+                        presetName = presetName,
+                        canEdit = canEditClock,
+                        onFontAndColor = { onEditItem(clockItemId) }
                     )
 
                     LockTarget.WIDGET_GRID -> WidgetSheetHeader(
                         title = stringResource(R.string.sheet_widgets_1x4),
-                        usage = stringResource(R.string.slots_used_grid, state.gridCellsUsed, state.composition.gridCapacity),
-                        hasItems = state.gridWidgets.isNotEmpty(),
+                        usage = stringResource(R.string.slots_used_grid, gridCellsUsed, gridCapacity),
+                        hasItems = gridWidgets.isNotEmpty(),
                         onAddCustom = onAdd,
-                        onEditFirst = { onEditItem(state.selectedItem ?: state.gridWidgets.firstOrNull()?.id) }
+                        onEditFirst = { onEditItem(selectedItem ?: gridWidgets.firstOrNull()?.id) }
                     )
 
                     LockTarget.INLINE_GRID -> WidgetSheetHeader(
                         title = stringResource(R.string.sheet_inline_1x2),
-                        usage = stringResource(R.string.slots_used_inline, state.inlineCount),
-                        hasItems = state.inlineWidgets.isNotEmpty(),
+                        usage = stringResource(R.string.slots_used_inline, inlineWidgets.size),
+                        hasItems = inlineWidgets.isNotEmpty(),
                         onAddCustom = onAdd,
-                        onEditFirst = { onEditItem(state.selectedItem ?: state.inlineWidgets.firstOrNull()?.id) }
+                        onEditFirst = { onEditItem(selectedItem ?: inlineWidgets.firstOrNull()?.id) }
                     )
 
                     LockTarget.SHORTCUTS -> ShortcutsSheetHeader(
-                        activeSlot = state.activeShortcutSlot,
-                        leftShortcut = state.shortcutLeft,
-                        rightShortcut = state.shortcutRight,
+                        activeSlot = activeShortcutSlot,
+                        leftShortcut = shortcutLeft,
+                        rightShortcut = shortcutRight,
                         onSlotSelected = onShortcutSlotSelected
                     )
                 }
@@ -1128,26 +1196,25 @@ private fun TargetCustomizationSheet(
         }
 
         AnimatedContent(
-            targetState = target,
+            targetState = activeTarget,
             transitionSpec = { fadeIn(tween(220, delayMillis = 50)) togetherWith fadeOut(tween(140)) },
             modifier = Modifier.weight(1f),
             label = "sheetBody"
         ) { current ->
             when (current) {
                 LockTarget.CLOCK -> ClockCarouselsBody(
-                    sections = remember(state.faces) { state.clockCarousels() },
-                    previews = state.presetPreviews,
-                    checked = state::isChecked,
+                    sections = clockSections,
+                    previews = presetPreviews,
+                    selectedStyle = selectedClockStyle,
                     onSelect = onFaceSelected,
                     onLongPress = onLongPress
                 )
 
                 LockTarget.WIDGET_GRID -> WidgetCarouselsBody(
                     zone = WidgetZone.GRID_1X4,
-                    placedItems = state.gridWidgets,
-                    sections = remember(state.faces) { state.widgetCarousels(WidgetZone.GRID_1X4) },
-                    faceOf = state::faceOf,
-                    checked = state::isChecked,
+                    placedSlots = gridSlots,
+                    sections = gridSections,
+                    selectedStyles = widgetStyles,
                     onSelectPreset = onFaceSelected,
                     onEditPlaced = onEditItem,
                     onRemovePlaced = onRemoveWidget
@@ -1155,25 +1222,24 @@ private fun TargetCustomizationSheet(
 
                 LockTarget.INLINE_GRID -> WidgetCarouselsBody(
                     zone = WidgetZone.INLINE_1X2,
-                    placedItems = state.inlineWidgets,
-                    sections = remember(state.faces) { state.widgetCarousels(WidgetZone.INLINE_1X2) },
-                    faceOf = state::faceOf,
-                    checked = state::isChecked,
+                    placedSlots = inlineSlots,
+                    sections = inlineSections,
+                    selectedStyles = widgetStyles,
                     onSelectPreset = onFaceSelected,
                     onEditPlaced = onEditItem,
                     onRemovePlaced = onRemoveWidget
                 )
 
                 LockTarget.SHORTCUTS -> {
-                    val currentSelected = if (state.activeShortcutSlot == ShortcutSlot.LEFT) {
-                        state.shortcutLeft
+                    val currentSelected = if (activeShortcutSlot == ShortcutSlot.LEFT) {
+                        shortcutLeft
                     } else {
-                        state.shortcutRight
+                        shortcutRight
                     }
                     ShortcutsSheetBody(
-                        affordances = state.availableAffordances,
+                        affordances = availableAffordances,
                         currentShortcut = currentSelected,
-                        onSelect = { affordanceId -> onShortcutSelected(state.activeShortcutSlot, affordanceId) }
+                        onSelect = { affordanceId -> onShortcutSelected(activeShortcutSlot, affordanceId) }
                     )
                 }
             }
@@ -1522,11 +1588,13 @@ internal fun affordanceLabel(affordance: LockscreenAffordance): String {
     return affordance.displayLabel(fallback)
 }
 
+private data class PlacedWidgetSlot(val id: Int, val label: String?)
+
 @Composable
 private fun ClockCarouselsBody(
     sections: List<FaceSection>,
     previews: Map<Int, ClockFace>,
-    checked: (FacePreset) -> Boolean,
+    selectedStyle: Int?,
     onSelect: (Int) -> Unit,
     onLongPress: (FacePreset) -> Unit
 ) {
@@ -1552,7 +1620,7 @@ private fun ClockCarouselsBody(
                             ClockCarouselCard(
                                 preset = preset,
                                 face = previews[preset.style] ?: preset.face,
-                                selected = checked(preset),
+                                selected = selectedStyle != null && preset.style == selectedStyle,
                                 onClick = { onSelect(preset.style) },
                                 onLongClick = { onLongPress(preset) }
                             )
@@ -1567,10 +1635,9 @@ private fun ClockCarouselsBody(
 @Composable
 private fun WidgetCarouselsBody(
     zone: WidgetZone,
-    placedItems: List<CompositionItem>,
+    placedSlots: List<PlacedWidgetSlot>,
     sections: List<FaceSection>,
-    faceOf: (Int) -> ClockFace?,
-    checked: (FacePreset) -> Boolean,
+    selectedStyles: Set<Int>,
     onSelectPreset: (Int) -> Unit,
     onEditPlaced: (Int) -> Unit,
     onRemovePlaced: (Int) -> Unit
@@ -1582,11 +1649,10 @@ private fun WidgetCarouselsBody(
             contentPadding = PaddingValues(top = 4.dp, bottom = 18.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (placedItems.isNotEmpty()) {
+            if (placedSlots.isNotEmpty()) {
                 item(key = "placed_strip") {
                     PlacedSlotsRow(
-                        items = placedItems,
-                        faceOf = faceOf,
+                        slots = placedSlots,
                         onEdit = onEditPlaced,
                         onRemove = onRemovePlaced
                     )
@@ -1610,7 +1676,7 @@ private fun WidgetCarouselsBody(
                             WidgetCarouselCard(
                                 preset = preset,
                                 inline = isInline,
-                                selected = checked(preset),
+                                selected = preset.style in selectedStyles,
                                 onClick = { onSelectPreset(preset.style) }
                             )
                         }
@@ -1623,8 +1689,7 @@ private fun WidgetCarouselsBody(
 
 @Composable
 private fun PlacedSlotsRow(
-    items: List<CompositionItem>,
-    faceOf: (Int) -> ClockFace?,
+    slots: List<PlacedWidgetSlot>,
     onEdit: (Int) -> Unit,
     onRemove: (Int) -> Unit
 ) {
@@ -1632,17 +1697,17 @@ private fun PlacedSlotsRow(
         contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(items, key = { it.id }) { item ->
-            val label = faceOf(item.style)?.name ?: stringResource(R.string.panel_item)
+        items(slots, key = { it.id }) { slot ->
+            val label = slot.label ?: stringResource(R.string.panel_item)
             val removeDesc = stringResource(R.string.action_remove)
             Surface(
-                onClick = { onEdit(item.id) },
+                onClick = { onEdit(slot.id) },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.secondaryContainer,
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier
                     .heightIn(min = 48.dp)
-                    .testTag("placed_slot_${item.id}")
+                    .testTag("placed_slot_${slot.id}")
             ) {
                 Row(
                     modifier = Modifier.padding(start = 12.dp, end = 4.dp),
@@ -1657,11 +1722,11 @@ private fun PlacedSlotsRow(
                         modifier = Modifier.widthIn(max = 128.dp)
                     )
                     IconButton(
-                        onClick = { onRemove(item.id) },
+                        onClick = { onRemove(slot.id) },
                         modifier = Modifier
                             .size(40.dp)
                             .semantics { contentDescription = "$removeDesc $label" }
-                            .testTag("remove_slot_${item.id}")
+                            .testTag("remove_slot_${slot.id}")
                     ) {
                         AppIcon(
                             icon = R.drawable.ic_cross,

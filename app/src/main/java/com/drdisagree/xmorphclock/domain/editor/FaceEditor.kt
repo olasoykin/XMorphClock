@@ -14,6 +14,7 @@ import com.drdisagree.xmorphclock.domain.model.RowNode
 import com.drdisagree.xmorphclock.domain.model.StackNode
 import com.drdisagree.xmorphclock.domain.model.StyleKey
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 object FaceEditor {
 
@@ -236,9 +237,9 @@ object FaceEditor {
 
                 val (nextWidth, nextStretchX) = if (com.drdisagree.xmorphclock.engine.FaceFont.hasWidthAxis(layer.font)) {
                     val baseW = (node.width ?: layer.width).toFloat()
-                    val targetW = (baseW + (wFactor - 1f) * WIDTH_AXIS_SENSITIVITY)
-                        .toInt()
-                        .coerceIn(MIN_WIDTH_AXIS, MAX_WIDTH_AXIS)
+                    val rawW = (baseW + (wFactor - 1f) * WIDTH_AXIS_SENSITIVITY)
+                        .coerceIn(MIN_WIDTH_AXIS.toFloat(), MAX_WIDTH_AXIS.toFloat())
+                    val targetW = quantizeAxis(rawW, MIN_WIDTH_AXIS, MAX_WIDTH_AXIS, WIDTH_AXIS_STEP)
                     val consumed = (1f + (targetW - baseW) / WIDTH_AXIS_SENSITIVITY).coerceAtLeast(0.35f)
                     val overflow = (wFactor / consumed).coerceIn(MIN_STRETCH, MAX_STRETCH)
                     val finalSx = if (abs(overflow - 1f) > 0.015f) {
@@ -253,9 +254,9 @@ object FaceEditor {
 
                 val (nextHeight, nextStretch) = if (com.drdisagree.xmorphclock.engine.FaceFont.hasHeightAxis(layer.font)) {
                     val baseH = (node.height ?: layer.height).toFloat()
-                    val targetH = (baseH + (hFactor - 1f) * HEIGHT_AXIS_SENSITIVITY)
-                        .toInt()
-                        .coerceIn(MIN_HEIGHT_AXIS, MAX_HEIGHT_AXIS)
+                    val rawH = (baseH + (hFactor - 1f) * HEIGHT_AXIS_SENSITIVITY)
+                        .coerceIn(MIN_HEIGHT_AXIS.toFloat(), MAX_HEIGHT_AXIS.toFloat())
+                    val targetH = quantizeAxis(rawH, MIN_HEIGHT_AXIS, MAX_HEIGHT_AXIS, HEIGHT_AXIS_STEP)
                     val consumed = (1f + (targetH - baseH) / HEIGHT_AXIS_SENSITIVITY).coerceAtLeast(0.4f)
                     val overflow = (hFactor / consumed).coerceIn(MIN_STRETCH, MAX_STRETCH)
                     val finalSy = if (abs(overflow - 1f) > 0.015f) {
@@ -503,13 +504,20 @@ object FaceEditor {
     }
 }
 
+private fun quantizeAxis(value: Float, min: Int, max: Int, step: Int): Int {
+    val snapped = min + ((value - min) / step).roundToInt() * step
+    return snapped.coerceIn(min, max)
+}
+
 private const val MIN_SLEEP_SCALE = 0.2f
 private const val MAX_SLEEP_SCALE = 3f
 private const val GROUP_EDGE = 0.0225f
 private const val MIN_WIDTH_AXIS = 25
 private const val MAX_WIDTH_AXIS = 151
+private const val WIDTH_AXIS_STEP = 5
 private const val MIN_HEIGHT_AXIS = 560
 private const val MAX_HEIGHT_AXIS = 788
+private const val HEIGHT_AXIS_STEP = 8
 private const val WIDTH_AXIS_SENSITIVITY = 140f
 private const val HEIGHT_AXIS_SENSITIVITY = 300f
 private const val MIN_STRETCH = 0.45f

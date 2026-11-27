@@ -7,7 +7,9 @@ import com.drdisagree.xmorphclock.domain.model.ClockFace
 import com.drdisagree.xmorphclock.domain.model.Composition
 import com.drdisagree.xmorphclock.domain.model.CompositionItem
 import com.drdisagree.xmorphclock.domain.model.FaceKind
+import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.FacePreset
+import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
 import com.drdisagree.xmorphclock.domain.model.ModuleStatus
 import com.drdisagree.xmorphclock.domain.model.ShortcutSlot
@@ -78,4 +80,16 @@ data class HomeUiState(
     private fun library(kind: FaceKind): List<FacePreset> = faces[kind].orEmpty().filterNot { kind.isMine(it.style) }
 
     fun faceOf(style: Int): ClockFace? = faces.values.firstNotNullOfOrNull { list -> list.firstOrNull { it.style == style } }?.face
+
+    fun clockPlacement(itemState: ItemState): FacePlacement {
+        composition.clockItem?.placement(itemState)?.let { return it }
+        val face = clockPreset?.face ?: return FacePlacement()
+        val node = when (itemState) {
+            ItemState.LARGE -> face.large
+            ItemState.SMALL -> face.small
+            ItemState.AOD_LARGE -> face.aodLarge ?: face.large
+            ItemState.AOD_SMALL -> face.aodSmall ?: face.small
+        }
+        return node.placement
+    }
 }

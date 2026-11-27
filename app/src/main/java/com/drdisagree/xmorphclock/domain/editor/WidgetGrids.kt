@@ -54,6 +54,9 @@ object WidgetGrids {
     private const val EPS = 0.0005f
     private const val AREA_EPS = 1e-6f
     private const val PUSH_SUBSTEP = 0.04f
+    private const val MIN_AUTO_CLOCK_SCALE = 0.45f
+    private const val MIN_AUTO_CLOCK_STRETCH = 0.55f
+    private const val MIN_AUTO_CLOCK_HEIGHT = 0.16f
 
     data class GridRow(
         val items: List<CompositionItem>,
@@ -530,7 +533,8 @@ object WidgetGrids {
         faceOf: (Int) -> ClockFace?,
         clockBounds: ItemBounds?,
         maxY: Float = DEFAULT_BOTTOM,
-        measuredInlineWidths: Map<Int, Float> = emptyMap()
+        measuredInlineWidths: Map<Int, Float> = emptyMap(),
+        clockFace: ClockFace? = null
     ): Pair<Composition, ItemBounds?> {
         val clock = clockBounds ?: return composition to null
         val clockItem = composition.clockItem ?: return composition to clock
@@ -550,19 +554,23 @@ object WidgetGrids {
             inlineRows.sumOf { it.height.toDouble() }.toFloat() + gap * (inlineRows.size - 1).coerceAtLeast(0)
         }
         val totalH = rowHGrid + rowHInline + (if (grid.isNotEmpty() && inline.isNotEmpty()) zoneGap else 0f)
-        val effectiveAbove = areWidgetsAboveClock(
-            composition = composition,
-            itemState = itemState,
-            faceOf = faceOf,
-            clockBounds = clock,
-            measuredInlineWidths = measuredInlineWidths
-        ) ?: composition.widgetsAbove
+        val effectiveAbove = if (composition.gridDocked || composition.inlineDocked) {
+            composition.widgetsAbove
+        } else {
+            areWidgetsAboveClock(
+                composition = composition,
+                itemState = itemState,
+                faceOf = faceOf,
+                clockBounds = clock,
+                measuredInlineWidths = measuredInlineWidths
+            ) ?: composition.widgetsAbove
+        }
 
         val clockShiftY = if (effectiveAbove) {
             val spaceAbove = clock.top - MIN_TOP - zoneGap
             if (spaceAbove < totalH) {
                 val neededShift = totalH - spaceAbove
-                val maxAllowedShift = (maxBottom - clock.bottom - 0.05f).coerceAtLeast(0f)
+                val maxAllowedShift = (maxBottom - clock.bottom - 0.02f).coerceAtLeast(0f)
                 neededShift.coerceIn(0f, maxAllowedShift)
             } else 0f
         } else {
@@ -575,9 +583,277 @@ object WidgetGrids {
         }
 
         if (clockShiftY == 0f) return composition to clock
-        val shifted = applyMovedItems(composition, setOf(clockItem.id), itemState, 0f, clockShiftY) { FacePlacement() }
+        val shifted = applyMovedItems(composition, setOf(clockItem.id), itemState, 0f, clockShiftY) {
+            clockFace?.let { defaultClockPlacement(it, itemState) } ?: FacePlacement()
+        }
         val shiftedBounds = ItemBounds(clock.left, clock.top + clockShiftY, clock.right, clock.bottom + clockShiftY)
         return shifted to shiftedBounds
+    }
+
+    fun fitClockScaleForComposition(
+        composition: Composition,
+        clockFace: ClockFace,
+        faceOf: (Int) -> ClockFace?,
+        largeMaxY: Float = DEFAULT_BOTTOM,
+        smallMaxY: Float = DEFAULT_BOTTOM,
+        largeClockBounds: ItemBounds? = null,
+        smallClockBounds: ItemBounds? = null,
+        measuredInlineWidths: Map<Int, Float> = emptyMap()
+    ): Composition {
+        var result = composition
+        val clockItemInitial = result.clockItem ?: return result
+        val grid = gridItems(result, faceOf)
+        val inline = inlineItems(result, faceOf)
+        val gap = FaceGrid.GAP
+        val zoneGap = GRID_GAP
+        val gridRows = packGridRows(grid, result.gridCols, faceOf)
+        val inlineRows = packInlineRows(inline, faceOf, measuredInlineWidths)
+        val rowHGrid = if (gridRows.isEmpty()) 0f else {
+            gridRows.sumOf { it.height.toDouble() }.toFloat() + gap * (gridRows.size - 1).coerceAtLeast(0)
+        }
+        val rowHInline = if (inlineRows.isEmpty()) 0f else {
+            inlineRows.sumOf { it.height.toDouble() }.toFloat() + gap * (inlineRows.size - 1).coerceAtLeast(0)
+        }
+        val hasWidgets = grid.isNotEmpty() || inline.isNotEmpty()
+        val widgetReserveH = if (!hasWidgets) {
+            0f
+        } else {
+            rowHGrid + rowHInline + (if (grid.isNotEmpty() && inline.isNotEmpty()) zoneGap else 0f) + zoneGap
+        }
+
+        val maxAvailW = (1f - EDGE * 2f).coerceAtLeast(0.2f)
+        val states = buildList {
+            add(Triple(ItemState.LARGE, largeMaxY, largeClockBounds))
+            add(Triple(ItemState.SMALL, smallMaxY, smallClockBounds))
+            if (clockFace.aodLarge != null || clockItemInitial.aodLarge != null) {
+                add(Triple(ItemState.AOD_LARGE, largeMaxY, null))
+            }
+            if (clockFace.aodSmall != null || clockItemInitial.aodSmall != null) {
+                add(Triple(ItemState.AOD_SMALL, smallMaxY, null))
+            }
+        }
+
+        states.forEach { (state, maxY, measuredBounds) ->
+            val clockItem = result.clockItem ?: return@forEach
+            val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+            val maxAvailH = if (hasWidgets) {
+                (maxBottom - MIN_TOP - widgetReserveH).coerceAtLeast(MIN_AUTO_CLOCK_HEIGHT)
+            } else {
+                (maxBottom - MIN_TOP).coerceAtLeast(MIN_AUTO_CLOCK_HEIGHT)
+            }
+
+            val currentScale = clockItem.scale(state)
+            var currentWStretch = clockItem.widthStretch(state)
+            var currentHStretch = clockItem.heightStretch(state)
+            if (clockFace.isAnalog && (currentWStretch != 1f || currentHStretch != 1f)) {
+                currentWStretch = 1f
+                currentHStretch = 1f
+                val normalized = clockItem.withTransform(state, currentScale, 1f, 1f)
+                result = result.copy(items = result.items.map { if (it.id == normalized.id) normalized else it })
+            }
+
+            val estimatedBefore = estimateClockBounds(clockFace, result.clockItem, state)
+            val activeBoundsBefore = measuredBounds ?: estimatedBefore
+            val wRatio = if (activeBoundsBefore.width > maxAvailW && activeBoundsBefore.width > EPS) {
+                maxAvailW / activeBoundsBefore.width
+            } else 1f
+            val hRatio = if (activeBoundsBefore.height > maxAvailH && activeBoundsBefore.height > EPS) {
+                maxAvailH / activeBoundsBefore.height
+            } else 1f
+            val shrinkRatio = minOf(wRatio, hRatio)
+
+            var effectiveScale = currentScale
+            var effectiveWStretch = currentWStretch
+            var effectiveHStretch = currentHStretch
+
+            if (shrinkRatio < 0.995f) {
+                val targetScale = (currentScale * shrinkRatio).coerceIn(MIN_AUTO_CLOCK_SCALE, currentScale)
+                val appliedScaleRatio = if (currentScale > EPS) targetScale / currentScale else 1f
+                effectiveScale = targetScale
+
+                if (!clockFace.isAnalog) {
+                    val remainingWRatio = if (appliedScaleRatio > EPS) (wRatio / appliedScaleRatio).coerceAtMost(1f) else 1f
+                    val remainingHRatio = if (appliedScaleRatio > EPS) (hRatio / appliedScaleRatio).coerceAtMost(1f) else 1f
+                    if (remainingWRatio < 0.995f) {
+                        effectiveWStretch = (effectiveWStretch * remainingWRatio).coerceIn(MIN_AUTO_CLOCK_STRETCH, effectiveWStretch)
+                    }
+                    if (remainingHRatio < 0.995f) {
+                        effectiveHStretch = (effectiveHStretch * remainingHRatio).coerceIn(MIN_AUTO_CLOCK_STRETCH, effectiveHStretch)
+                    }
+                }
+
+                val latestClock = result.clockItem ?: return@forEach
+                val resizedClock = latestClock.withTransform(state, effectiveScale, effectiveWStretch, effectiveHStretch)
+                result = result.copy(items = result.items.map { if (it.id == resizedClock.id) resizedClock else it })
+            }
+
+            val updatedItem = result.clockItem ?: return@forEach
+            val basePlacement = updatedItem.placement(state) ?: defaultClockPlacement(clockFace, state)
+            val boundsAfterScale = if (measuredBounds != null) {
+                scaleBoundsForTransform(
+                    measured = measuredBounds,
+                    anchor = basePlacement.anchor,
+                    scaleRatioX = (effectiveScale / currentScale.coerceAtLeast(EPS)) * (effectiveWStretch / currentWStretch.coerceAtLeast(EPS)),
+                    scaleRatioY = (effectiveScale / currentScale.coerceAtLeast(EPS)) * (effectiveHStretch / currentHStretch.coerceAtLeast(EPS))
+                )
+            } else {
+                estimateClockBounds(clockFace, updatedItem, state)
+            }
+
+            val clamped = clampClockBoundsToScreen(
+                composition = result,
+                clockFace = clockFace,
+                itemState = state,
+                maxY = maxY,
+                clockBoundsOverride = boundsAfterScale
+            )
+            result = clamped.first
+        }
+
+        return result
+    }
+
+    fun clampClockBoundsToScreen(
+        composition: Composition,
+        clockFace: ClockFace,
+        itemState: ItemState,
+        maxY: Float = DEFAULT_BOTTOM,
+        clockBoundsOverride: ItemBounds? = null
+    ): Pair<Composition, ItemBounds?> {
+        val clockItem = composition.clockItem ?: return composition to null
+        val bounds = clockBoundsOverride ?: estimateClockBounds(clockFace, clockItem, itemState)
+        val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+        val availW = (1f - EDGE * 2f).coerceAtLeast(0.1f)
+        val availH = (maxBottom - MIN_TOP).coerceAtLeast(0.1f)
+
+        val dx = if (bounds.width <= availW) {
+            when {
+                bounds.left < EDGE -> EDGE - bounds.left
+                bounds.right > 1f - EDGE -> (1f - EDGE) - bounds.right
+                else -> 0f
+            }
+        } else {
+            0.5f - (bounds.left + bounds.right) * 0.5f
+        }
+
+        val dy = if (bounds.height <= availH) {
+            when {
+                bounds.top < MIN_TOP -> MIN_TOP - bounds.top
+                bounds.bottom > maxBottom -> maxBottom - bounds.bottom
+                else -> 0f
+            }
+        } else {
+            MIN_TOP - bounds.top
+        }
+
+        if (abs(dx) <= EPS && abs(dy) <= EPS) {
+            return composition to bounds
+        }
+
+        val shiftedComp = applyMovedItems(composition, setOf(clockItem.id), itemState, dx, dy) {
+            defaultClockPlacement(clockFace, itemState)
+        }
+        return shiftedComp to shifted(bounds, dx, dy)
+    }
+
+    fun layoutPenalty(
+        composition: Composition,
+        clockFace: ClockFace,
+        faceOf: (Int) -> ClockFace?,
+        itemState: ItemState,
+        maxY: Float = DEFAULT_BOTTOM,
+        clockBoundsOverride: ItemBounds? = null,
+        measuredInlineWidths: Map<Int, Float> = emptyMap(),
+        minGap: Float = ZONE_GAP
+    ): Float {
+        val clockItem = composition.clockItem ?: return 0f
+        val clock = clockBoundsOverride ?: estimateClockBounds(clockFace, clockItem, itemState)
+        val grid = gridItems(composition, faceOf).mapNotNull { widgetBoundsOf(it, itemState, faceOf, measuredInlineWidths) }
+        val inline = inlineItems(composition, faceOf).mapNotNull { widgetBoundsOf(it, itemState, faceOf, measuredInlineWidths) }
+        val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
+
+        var penalty = 0f
+        fun edgeOverflow(box: ItemBounds) {
+            if (box.left < EDGE - EPS) penalty += (EDGE - box.left)
+            if (box.right > 1f - EDGE + EPS) penalty += (box.right - (1f - EDGE))
+            if (box.top < MIN_TOP - EPS) penalty += (MIN_TOP - box.top)
+            if (box.bottom > maxBottom + EPS) penalty += (box.bottom - maxBottom)
+        }
+
+        edgeOverflow(clock)
+        grid.forEach(::edgeOverflow)
+        inline.forEach(::edgeOverflow)
+
+        val paddedClock = padded(clock, minGap)
+        grid.forEach { g ->
+            if (overlaps(paddedClock, g)) {
+                val ox = (minOf(paddedClock.right, g.right) - maxOf(paddedClock.left, g.left)).coerceAtLeast(0f)
+                val oy = (minOf(paddedClock.bottom, g.bottom) - maxOf(paddedClock.top, g.top)).coerceAtLeast(0f)
+                penalty += ox * oy + maxOf(ox, oy) * 0.05f
+            }
+        }
+        inline.forEach { i ->
+            if (overlaps(paddedClock, i)) {
+                val ox = (minOf(paddedClock.right, i.right) - maxOf(paddedClock.left, i.left)).coerceAtLeast(0f)
+                val oy = (minOf(paddedClock.bottom, i.bottom) - maxOf(paddedClock.top, i.top)).coerceAtLeast(0f)
+                penalty += ox * oy + maxOf(ox, oy) * 0.05f
+            }
+        }
+        val widgetGap = minGap * 0.5f
+        grid.forEach { g ->
+            val pg = padded(g, widgetGap)
+            inline.forEach { i ->
+                if (overlaps(pg, i)) {
+                    val ox = (minOf(pg.right, i.right) - maxOf(pg.left, i.left)).coerceAtLeast(0f)
+                    val oy = (minOf(pg.bottom, i.bottom) - maxOf(pg.top, i.top)).coerceAtLeast(0f)
+                    penalty += ox * oy + maxOf(ox, oy) * 0.05f
+                }
+            }
+        }
+        return penalty
+    }
+
+    fun hasAnyCollision(
+        composition: Composition,
+        clockFace: ClockFace,
+        faceOf: (Int) -> ClockFace?,
+        itemState: ItemState,
+        maxY: Float = DEFAULT_BOTTOM,
+        clockBoundsOverride: ItemBounds? = null,
+        measuredInlineWidths: Map<Int, Float> = emptyMap(),
+        minGap: Float = ZONE_GAP
+    ): Boolean = layoutPenalty(
+        composition = composition,
+        clockFace = clockFace,
+        faceOf = faceOf,
+        itemState = itemState,
+        maxY = maxY,
+        clockBoundsOverride = clockBoundsOverride,
+        measuredInlineWidths = measuredInlineWidths,
+        minGap = minGap
+    ) > 1e-4f
+
+    private fun scaleBoundsForTransform(
+        measured: ItemBounds,
+        anchor: FaceAlign,
+        scaleRatioX: Float,
+        scaleRatioY: Float
+    ): ItemBounds {
+        val newW = measured.width * scaleRatioX
+        val newH = measured.height * scaleRatioY
+        val left = when (anchor) {
+            FaceAlign.START -> measured.left
+            FaceAlign.CENTER -> (measured.left + measured.right) * 0.5f - newW * 0.5f
+            FaceAlign.END -> measured.right - newW
+        }
+        return ItemBounds(left, measured.top, left + newW, measured.top + newH)
+    }
+
+    private fun defaultClockPlacement(face: ClockFace, state: ItemState): FacePlacement = when (state) {
+        ItemState.LARGE -> face.large.placement
+        ItemState.SMALL -> face.small.placement
+        ItemState.AOD_LARGE -> (face.aodLarge ?: face.large).placement
+        ItemState.AOD_SMALL -> (face.aodSmall ?: face.small).placement
     }
 
     fun reconcileWidgetsForClock(
@@ -596,13 +872,22 @@ object WidgetGrids {
 
         var result = composition
         listOf(ItemState.LARGE to largeMaxY, ItemState.SMALL to smallMaxY).forEach { (state, maxY) ->
+            val maxBottom = (maxY - EDGE).coerceAtLeast(MIN_TOP + 0.1f)
             val rawClock = when (state) {
                 ItemState.LARGE -> largeClockBounds
                 ItemState.SMALL -> smallClockBounds
                 else -> null
             } ?: estimateClockBounds(clockFace, result.clockItem, state)
 
-            val (cleared, clockBounds) = ensureClockClearanceForWidgets(result, state, faceOf, rawClock, maxY, measuredInlineWidths)
+            val (cleared, clockBounds) = ensureClockClearanceForWidgets(
+                composition = result,
+                itemState = state,
+                faceOf = faceOf,
+                clockBounds = rawClock,
+                maxY = maxY,
+                measuredInlineWidths = measuredInlineWidths,
+                clockFace = clockFace
+            )
             result = cleared
             val activeClock = clockBounds ?: rawClock
             val activePaddedClock = ItemBounds(
@@ -611,13 +896,16 @@ object WidgetGrids {
                 activeClock.right + GRID_GAP,
                 activeClock.bottom + GRID_GAP
             )
+            fun isOutOfBounds(b: ItemBounds): Boolean =
+                b.top < MIN_TOP - EPS || b.bottom > maxBottom + EPS || b.left < EDGE - EPS || b.right > 1f - EDGE + EPS
+
             val gridOverlaps = grid.any { item ->
                 val b = widgetBoundsOf(item, state, faceOf, measuredInlineWidths) ?: return@any true
-                overlaps(b, activePaddedClock)
+                overlaps(b, activePaddedClock) || isOutOfBounds(b)
             }
             val inlineOverlapsClock = inline.any { item ->
                 val b = widgetBoundsOf(item, state, faceOf, measuredInlineWidths) ?: return@any true
-                overlaps(b, activePaddedClock)
+                overlaps(b, activePaddedClock) || isOutOfBounds(b)
             }
             val gridInlineOverlap = grid.any { g ->
                 val gb = widgetBoundsOf(g, state, faceOf, measuredInlineWidths) ?: return@any true
@@ -633,7 +921,7 @@ object WidgetGrids {
                 }
             }
 
-            val needGridLayout = grid.isNotEmpty() && (result.gridDocked || gridOverlaps)
+            val needGridLayout = grid.isNotEmpty() && (result.gridDocked || gridOverlaps || gridInlineOverlap)
             val needInlineLayout = inline.isNotEmpty() && (result.inlineDocked || inlineOverlapsClock || gridInlineOverlap)
             if (!needGridLayout && !needInlineLayout) return@forEach
 
@@ -649,7 +937,7 @@ object WidgetGrids {
                     clockBounds = activeClock,
                     widgetsAbove = result.widgetsAbove,
                     measuredInlineWidths = measuredInlineWidths,
-                    preserveExistingSide = true
+                    preserveExistingSide = !result.gridDocked
                 )
             }
             if (needInlineLayout) {
@@ -664,8 +952,32 @@ object WidgetGrids {
                     clockBounds = activeClock,
                     widgetsAbove = result.widgetsAbove,
                     measuredInlineWidths = measuredInlineWidths,
-                    preserveExistingSide = true
+                    preserveExistingSide = !result.inlineDocked
                 )
+            }
+            if (needGridLayout && needInlineLayout) {
+                val stillOverlapGridInline = gridItems(result, faceOf).any { g ->
+                    val gb = widgetBoundsOf(g, state, faceOf, measuredInlineWidths) ?: return@any false
+                    inlineItems(result, faceOf).any { i ->
+                        val ib = widgetBoundsOf(i, state, faceOf, measuredInlineWidths) ?: return@any false
+                        overlaps(gb, padded(ib, GRID_GAP * 0.5f))
+                    }
+                }
+                if (stillOverlapGridInline) {
+                    result = layoutZone(
+                        composition = result,
+                        zone = WidgetZone.GRID_1X4,
+                        itemState = state,
+                        faceOf = faceOf,
+                        clockBottomY = activeClock.bottom,
+                        maxY = maxY,
+                        centerHorizontally = result.gridDocked,
+                        clockBounds = activeClock,
+                        widgetsAbove = result.widgetsAbove,
+                        measuredInlineWidths = measuredInlineWidths,
+                        preserveExistingSide = !result.gridDocked
+                    )
+                }
             }
         }
         return result
@@ -727,7 +1039,8 @@ object WidgetGrids {
         faceOf: (Int) -> ClockFace?,
         clockBounds: ItemBounds?,
         maxY: Float = DEFAULT_BOTTOM,
-        measuredInlineWidths: Map<Int, Float> = emptyMap()
+        measuredInlineWidths: Map<Int, Float> = emptyMap(),
+        clockFace: ClockFace? = null
     ): Composition {
         val zoneGap = GRID_GAP
         val gap = FaceGrid.GAP
@@ -768,7 +1081,9 @@ object WidgetGrids {
 
         val clockItem = composition.clockItem
         if (clockShiftY != 0f && clockItem != null) {
-            result = applyMovedItems(result, setOf(clockItem.id), itemState, 0f, clockShiftY) { FacePlacement() }
+            result = applyMovedItems(result, setOf(clockItem.id), itemState, 0f, clockShiftY) {
+                clockFace?.let { defaultClockPlacement(it, itemState) } ?: FacePlacement()
+            }
         }
 
         val shiftedClock = ItemBounds(clock.left, clock.top + clockShiftY, clock.right, clock.bottom + clockShiftY)
@@ -2095,17 +2410,35 @@ object WidgetGrids {
                 clockSpan = clockSpan
             )?.let { return it }
         }
-        // Keep the zone on its requested side of the clock even when the other widget zone crowds it
-        val clockOnlySpan = (rawClockTop - clockMinGap) to (rawClockBottom + clockMinGap)
+        val minClockOnlySpan = (rawClockTop - clockMinGap) to (rawClockBottom + clockMinGap)
+        // First stay on the requested side clear of the clock
         findNonOverlappingYOnSide(
             desiredTop = desiredTop,
             rowHeight = rowHeight,
             minTop = minTop,
             maxBottom = maxBottom,
-            forbidden = listOf(clockOnlySpan),
+            forbidden = listOf(minClockOnlySpan),
             preferBelow = preferBelow,
-            clockSpan = clockOnlySpan
+            clockSpan = minClockOnlySpan
         )?.let { return it }
+
+        // Only flip sides if the requested side cannot fit the zone clear of the clock
+        val bothFreeIntervals = freeIntervals(
+            minTop,
+            maxBottom,
+            listOfNotNull(minClockOnlySpan, otherZoneSpan(clockMinGap))
+        ).filter { (s, e) -> e - s >= rowHeight - EPS }
+        if (bothFreeIntervals.isNotEmpty()) {
+            return findNonOverlappingY(
+                desiredTop = desiredTop,
+                rowHeight = rowHeight,
+                minTop = minTop,
+                maxBottom = maxBottom,
+                forbidden = listOfNotNull(minClockOnlySpan, otherZoneSpan(clockMinGap)),
+                preferBelow = preferBelow,
+                clockSpan = minClockOnlySpan
+            )
+        }
 
         val fallbackClockSpan = (rawClockTop - GRID_GAP) to (rawClockBottom + GRID_GAP)
         return findNonOverlappingY(
@@ -2327,8 +2660,9 @@ object WidgetGrids {
                     val stretchX = node.stretchX ?: 1f
                     val descent = if (layer == null || layer.isTime || layer.isShape) 0f else node.size * ESTIMATE_TEXT_DESCENT
                     val tracking = node.tracking ?: layer?.tracking ?: 0f
-                    w = estimateWidthRatio(layer, tracking) * stretchX * node.size
-                    h = capRatio * stretch * node.size * lineHeight + descent
+                    val slack = (layer?.let { if (it.stroke != null) it.strokeWidth else 0f } ?: 0f) + ESTIMATE_EDGE_SLACK
+                    w = estimateWidthRatio(layer, tracking) * stretchX * node.size + node.size * slack * 2f
+                    h = capRatio * stretch * node.size * lineHeight + descent + node.size * slack * 2f
                 }
                 EstBox(width = w, height = h)
             }
@@ -2439,6 +2773,7 @@ object WidgetGrids {
         FaceAlign.END -> container - child
     }
 
-    private const val ESTIMATE_CAP_RATIO = 0.82f
+    private const val ESTIMATE_CAP_RATIO = 0.84f
+    private const val ESTIMATE_EDGE_SLACK = 0.04f
     private const val ESTIMATE_TEXT_DESCENT = 0.24f
 }

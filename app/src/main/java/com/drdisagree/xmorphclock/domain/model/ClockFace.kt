@@ -10,4 +10,7 @@ data class ClockFace(
     val id: Int = -1,
     val aodLarge: FaceNode? = null,
     val aodSmall: FaceNode? = null
-)
+) {
+    val isAnalog: Boolean
+        get() = layers.any { it.isHand }
+}

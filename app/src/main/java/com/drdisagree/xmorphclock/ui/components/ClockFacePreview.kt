@@ -32,12 +32,12 @@ fun ClockFacePreview(
         modifier = if (fit) modifier.fitInside(centered) else modifier,
         update = { view ->
             view.fitToBounds = fit
-            if (view.face != face) view.face = face
             view.data = data
             view.setLargeProgress(largeProgress())
             view.setSleepProgress(sleepProgress())
             view.setAodProgress(aodProgress())
             configure(view)
+            if (view.face != face) view.face = face
         }
     )
 }

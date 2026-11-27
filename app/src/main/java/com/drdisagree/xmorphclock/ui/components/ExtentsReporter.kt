@@ -52,7 +52,10 @@ internal class ExtentsReporter : ViewTreeObserver.OnPreDrawListener {
         ) {
             return true
         }
-        val rects = target.layerRects().mapValues { RectF(it.value).apply { offset(shift.x, shift.y) } }
+        val rects = target.layerExtents()
+        if (shift.x != 0f || shift.y != 0f) {
+            rects.values.forEach { it.offset(shift.x, shift.y) }
+        }
         lastRevision = rev
         lastWidth = w
         lastShiftX = shift.x

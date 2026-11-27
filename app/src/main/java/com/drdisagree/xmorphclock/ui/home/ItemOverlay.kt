@@ -73,7 +73,9 @@ import com.drdisagree.xmorphclock.domain.editor.ItemSnapper
 import com.drdisagree.xmorphclock.domain.editor.LockTarget
 import com.drdisagree.xmorphclock.domain.editor.WidgetGrids
 import com.drdisagree.xmorphclock.domain.model.Composition
+import com.drdisagree.xmorphclock.domain.model.FaceAlign
 import com.drdisagree.xmorphclock.domain.model.FaceGrid
+import com.drdisagree.xmorphclock.domain.model.FacePlacement
 import com.drdisagree.xmorphclock.domain.model.ItemBounds
 import com.drdisagree.xmorphclock.domain.model.ItemState
 import com.drdisagree.xmorphclock.domain.model.LockscreenAffordance
@@ -109,6 +111,8 @@ fun BoxScope.ItemOverlay(
     shortcutLeft: LockscreenAffordance,
     shortcutRight: LockscreenAffordance,
     isAod: Boolean,
+    isClockAnalog: Boolean = false,
+    clockPlacement: FacePlacement = FacePlacement(),
     unit: Float,
     frameLeft: Float,
     frameTop: Float,
@@ -118,7 +122,7 @@ fun BoxScope.ItemOverlay(
     onGestureStart: (LockTarget) -> Unit = {},
     onSelectTarget: (LockTarget?, ShortcutSlot?, Boolean) -> Unit,
     onDrag: (Map<LockTarget, Pair<Float, Float>>, Boolean, Boolean) -> Unit,
-    onClockTransform: (ItemState, Float, Float, Float) -> Unit,
+    onClockTransform: (ItemState, Float, Float, Float, FacePlacement?) -> Unit,
     onGridSizeChange: (ItemState, Int, Int) -> Unit,
     onInlineRowsChange: (ItemState, Int) -> Unit,
     onDragEnd: () -> Unit,
@@ -411,6 +415,8 @@ fun BoxScope.ItemOverlay(
     val currentRightShortcut by rememberUpdatedState(rightShortcutRect)
     val currentShortcutObstacles by rememberUpdatedState(shortcutObstacleBounds)
     val currentIsAod by rememberUpdatedState(isAod)
+    val currentClockAnalog by rememberUpdatedState(isClockAnalog)
+    val currentClockPlacement by rememberUpdatedState(clockPlacement)
     val currentActive by rememberUpdatedState(activeTarget)
     val currentUnit by rememberUpdatedState(unit)
     val currentFrameLeft by rememberUpdatedState(frameLeft)
@@ -447,8 +453,8 @@ fun BoxScope.ItemOverlay(
         val selected = currentActive ?: return null
         val rect = currentResizables[selected] ?: return null
         val allowCorners = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID
-        val allowHorizontal = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID
-        val allowVertical = selected == LockTarget.CLOCK || selected == LockTarget.WIDGET_GRID || selected == LockTarget.INLINE_GRID
+        val allowHorizontal = (selected == LockTarget.CLOCK && !currentClockAnalog) || selected == LockTarget.WIDGET_GRID
+        val allowVertical = (selected == LockTarget.CLOCK && !currentClockAnalog) || selected == LockTarget.WIDGET_GRID || selected == LockTarget.INLINE_GRID
 
         val innerX = minOf(handleInnerPx, rect.width() * 0.25f)
         val innerY = minOf(handleInnerPx, rect.height() * 0.25f)
@@ -526,6 +532,7 @@ fun BoxScope.ItemOverlay(
                     val frameTopAtDown = currentFrameTop
                     val rawStart = hit?.let { currentDraggables[it] }?.let(::RectF)
                     val resizeStartRect = resizeHit?.first?.let { currentResizables[it] }?.let(::RectF)
+                    val resizeStartRawRect = resizeHit?.first?.let { currentDraggables[it] }?.let(::RectF)
                     val startBoundsByGroup = if (hit != null && hit != LockTarget.SHORTCUTS && unitAtDown > 0f) {
                         currentDraggables.mapValues { (_, rect) ->
                             rect.toBounds(frameLeftAtDown, frameTopAtDown, unitAtDown)
@@ -535,9 +542,10 @@ fun BoxScope.ItemOverlay(
 
                     val clockItemAtDown = currentComposition.clockItem
                     val stateAtDown = currentItemState
+                    val startClockPlacement = currentClockPlacement
                     val startClockScale = clockItemAtDown?.scale(stateAtDown) ?: 1f
-                    val startClockWidthStretch = clockItemAtDown?.widthStretch(stateAtDown) ?: 1f
-                    val startClockHeightStretch = clockItemAtDown?.heightStretch(stateAtDown) ?: 1f
+                    val startClockWidthStretch = if (currentClockAnalog) 1f else clockItemAtDown?.widthStretch(stateAtDown) ?: 1f
+                    val startClockHeightStretch = if (currentClockAnalog) 1f else clockItemAtDown?.heightStretch(stateAtDown) ?: 1f
                     val startGridCols = currentComposition.gridCols
                     val startGridRows = currentComposition.gridRows
                     val startInlineRows = currentComposition.inlineRows
@@ -605,52 +613,95 @@ fun BoxScope.ItemOverlay(
 
                             when (resizeHit.first) {
                                 LockTarget.CLOCK -> {
-                                    val maxW = (currentWidth - edgePadPx * 2f).coerceAtLeast(minTouch)
-                                    val maxH = (currentSafeBottom - edgePadPx).coerceAtLeast(minTouch)
-                                    val maxScaleFactor = minOf(maxW / startW, maxH / startH)
+                                    val startRaw = resizeStartRawRect ?: resizeStartRect
+                                    val rawW = startRaw.width().coerceAtLeast(minTouch)
+                                    val rawH = startRaw.height().coerceAtLeast(minTouch)
+                                    val maxRightPx = (currentWidth - edgePadPx).coerceAtLeast(edgePadPx + minTouch)
+                                    val minLeftPx = edgePadPx
+                                    val minTopPx = edgePadPx
+                                    val maxBottomPx = currentSafeBottom.coerceAtLeast(minTopPx + minTouch)
+                                    val hardMaxW = when {
+                                        sx > 0f -> maxRightPx - startRaw.left
+                                        sx < 0f -> startRaw.right - minLeftPx
+                                        else -> rawW
+                                    }.coerceAtLeast(minTouch)
+                                    val hardMaxH = when {
+                                        sy > 0f -> maxBottomPx - startRaw.top
+                                        sy < 0f -> startRaw.bottom - minTopPx
+                                        else -> rawH
+                                    }.coerceAtLeast(minTouch)
+                                    val growthLimitW = maxOf(1f, hardMaxW / rawW)
+                                    val growthLimitH = maxOf(1f, hardMaxH / rawH)
+
+                                    fun placedFor(left: Float, right: Float, top: Float): FacePlacement {
+                                        val nextX = when (startClockPlacement.anchor) {
+                                            FaceAlign.START -> startClockPlacement.x + (left - startRaw.left) / u
+                                            FaceAlign.CENTER -> startClockPlacement.x + ((left + right) * 0.5f - startRaw.centerX()) / u
+                                            FaceAlign.END -> startClockPlacement.x + (right - startRaw.right) / u
+                                        }
+                                        val nextY = startClockPlacement.y + (top - startRaw.top) / u
+                                        return startClockPlacement.copy(x = nextX, y = nextY)
+                                    }
+
                                     when (handle) {
                                         ResizeHandle.TOP_LEFT,
                                         ResizeHandle.TOP_RIGHT,
                                         ResizeHandle.BOTTOM_LEFT,
                                         ResizeHandle.BOTTOM_RIGHT -> {
-                                            val rx = (startW + sx * totalPx.x * 2f) / startW
-                                            val ry = (startH + sy * totalPx.y * 1.5f) / startH
-                                            val factor = ((rx + ry) * 0.5f).coerceIn(0.35f, maxOf(1f, maxScaleFactor))
-                                            val nextScale = (startClockScale * factor).coerceIn(
-                                                MIN_CLOCK_SCALE,
-                                                minOf(MAX_CLOCK_SCALE, startClockScale * maxScaleFactor).coerceAtLeast(MIN_CLOCK_SCALE)
-                                            )
+                                            val rx = (rawW + sx * totalPx.x) / rawW
+                                            val ry = (rawH + sy * totalPx.y) / rawH
+                                            val rawFactor = (rx + ry) * 0.5f
+                                            val maxFactor = minOf(MAX_CLOCK_SCALE / startClockScale, growthLimitW, growthLimitH)
+                                            val minFactor = maxOf(MIN_CLOCK_SCALE / startClockScale, minTouch / minOf(rawW, rawH))
+                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val nextScale = (startClockScale * factor).coerceIn(MIN_CLOCK_SCALE, MAX_CLOCK_SCALE)
+                                            val actualFactor = (nextScale / startClockScale).coerceAtLeast(0.01f)
+                                            val actualW = rawW * actualFactor
+                                            val actualH = rawH * actualFactor
+                                            val actualLeft = if (sx > 0f) startRaw.left else startRaw.right - actualW
+                                            val actualTop = if (sy > 0f) startRaw.top else startRaw.bottom - actualH
                                             currentClockTransform(
                                                 currentItemState,
                                                 nextScale,
                                                 startClockWidthStretch,
-                                                startClockHeightStretch
+                                                startClockHeightStretch,
+                                                placedFor(actualLeft, actualLeft + actualW, actualTop)
                                             )
                                         }
 
-                                        ResizeHandle.LEFT, ResizeHandle.RIGHT -> {
-                                            val factor = ((startW + sx * totalPx.x * 2f) / startW).coerceIn(0.35f, maxOf(1f, maxW / startW))
-                                            val maxWStretch = minOf(MAX_CLOCK_STRETCH, startClockWidthStretch * (maxW / startW))
-                                                .coerceAtLeast(MIN_CLOCK_STRETCH)
-                                            val nextWidthStretch = (startClockWidthStretch * factor).coerceIn(MIN_CLOCK_STRETCH, maxWStretch)
+                                        ResizeHandle.LEFT, ResizeHandle.RIGHT -> if (!currentClockAnalog) {
+                                            val rawFactor = (rawW + sx * totalPx.x) / rawW
+                                            val maxFactor = minOf(MAX_CLOCK_STRETCH / startClockWidthStretch, growthLimitW)
+                                            val minFactor = maxOf(MIN_CLOCK_STRETCH / startClockWidthStretch, minTouch / rawW)
+                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val nextWidthStretch = (startClockWidthStretch * factor).coerceIn(MIN_CLOCK_STRETCH, MAX_CLOCK_STRETCH)
+                                            val actualFactor = (nextWidthStretch / startClockWidthStretch).coerceAtLeast(0.01f)
+                                            val actualW = rawW * actualFactor
+                                            val actualLeft = if (sx > 0f) startRaw.left else startRaw.right - actualW
                                             currentClockTransform(
                                                 currentItemState,
                                                 startClockScale,
                                                 nextWidthStretch,
-                                                startClockHeightStretch
+                                                startClockHeightStretch,
+                                                placedFor(actualLeft, actualLeft + actualW, startRaw.top)
                                             )
                                         }
 
-                                        ResizeHandle.TOP, ResizeHandle.BOTTOM -> {
-                                            val factor = ((startH + sy * totalPx.y * 1.5f) / startH).coerceIn(0.35f, maxOf(1f, maxH / startH))
-                                            val maxHStretch = minOf(MAX_CLOCK_STRETCH, startClockHeightStretch * (maxH / startH))
-                                                .coerceAtLeast(MIN_CLOCK_STRETCH)
-                                            val nextHeightStretch = (startClockHeightStretch * factor).coerceIn(MIN_CLOCK_STRETCH, maxHStretch)
+                                        ResizeHandle.TOP, ResizeHandle.BOTTOM -> if (!currentClockAnalog) {
+                                            val rawFactor = (rawH + sy * totalPx.y) / rawH
+                                            val maxFactor = minOf(MAX_CLOCK_STRETCH / startClockHeightStretch, growthLimitH)
+                                            val minFactor = maxOf(MIN_CLOCK_STRETCH / startClockHeightStretch, minTouch / rawH)
+                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val nextHeightStretch = (startClockHeightStretch * factor).coerceIn(MIN_CLOCK_STRETCH, MAX_CLOCK_STRETCH)
+                                            val actualFactor = (nextHeightStretch / startClockHeightStretch).coerceAtLeast(0.01f)
+                                            val actualH = rawH * actualFactor
+                                            val actualTop = if (sy > 0f) startRaw.top else startRaw.bottom - actualH
                                             currentClockTransform(
                                                 currentItemState,
                                                 startClockScale,
                                                 startClockWidthStretch,
-                                                nextHeightStretch
+                                                nextHeightStretch,
+                                                placedFor(startRaw.left, startRaw.right, actualTop)
                                             )
                                         }
                                     }
@@ -818,8 +869,8 @@ fun BoxScope.ItemOverlay(
             columns = 1,
             rows = 1,
             allowCorners = true,
-            allowHorizontalEdges = true,
-            allowVerticalEdges = true,
+            allowHorizontalEdges = !isClockAnalog,
+            allowVerticalEdges = !isClockAnalog,
             activeHandle = if (isSelected && activeResizing) activeResizeHandle else null,
             animate = !activeDragging && !activeResizing
         )

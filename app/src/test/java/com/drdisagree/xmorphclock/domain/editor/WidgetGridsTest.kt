@@ -1135,6 +1135,123 @@ class WidgetGridsTest {
         )
     }
 
+    @Test
+    fun fitClockScaleForCompositionShrinksOversizedClockToAvoidWidgetOverlap() {
+        val oversizedClock = tallStackedClockFace()
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+
+        // Screen maxY = 1.25f: tall clock (~1.07f) + grid (0.14f) + inline (0.08f) + gaps exceeds available height.
+        var comp = Composition(gridDocked = true, inlineDocked = true, widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 1.30f), small = FacePlacement(0.5f, 0.35f))
+            .add(200, large = FacePlacement(0.5f, 1.48f), small = FacePlacement(0.5f, 0.55f))
+
+        comp = WidgetGrids.fitClockScaleForComposition(
+            composition = comp,
+            clockFace = oversizedClock,
+            faceOf = { map[it] },
+            largeMaxY = 1.25f,
+            smallMaxY = 1.45f
+        )
+        comp = WidgetGrids.reconcileWidgetsForClock(
+            composition = comp,
+            clockFace = oversizedClock,
+            faceOf = { map[it] },
+            largeMaxY = 1.25f,
+            smallMaxY = 1.45f
+        )
+
+        val fittedClock = requireNotNull(comp.clockItem)
+        assertTrue("Oversized LARGE clock scale should shrink below 1.0", fittedClock.scale(ItemState.LARGE) < 1f)
+        assertFalse(
+            "Auto-fitted LARGE layout should have zero collisions",
+            WidgetGrids.hasAnyCollision(comp, oversizedClock, { map[it] }, ItemState.LARGE, maxY = 1.25f)
+        )
+        assertFalse(
+            "Auto-fitted SMALL layout should have zero collisions",
+            WidgetGrids.hasAnyCollision(comp, oversizedClock, { map[it] }, ItemState.SMALL, maxY = 1.45f)
+        )
+    }
+
+    @Test
+    fun fitClockScaleForCompositionAndIsAnalogEnforceUniformAnalogScaling() {
+        val analogLayers = listOf(
+            FaceLayer("hours", FaceLayerType.HAND_HOUR),
+            FaceLayer("minutes", FaceLayerType.HAND_MINUTE)
+        )
+        val large = StackNode(
+            placement = FacePlacement(0.5f, 0.25f, FaceAlign.CENTER),
+            children = listOf(
+                LayerNode("hours", size = 0.90f),
+                LayerNode("minutes", size = 0.90f)
+            )
+        )
+        val analogClock = ClockFace(name = "Analog", layers = analogLayers, large = large, small = large)
+        assertTrue(analogClock.isAnalog)
+
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        val baseComp = Composition().add(100, null, null)
+        val stretchedClock = baseComp.clockItem!!.withTransform(ItemState.LARGE, 1.1f, 1.4f, 0.7f)
+        val comp = baseComp.copy(items = baseComp.items.map { if (it.clock) stretchedClock else it })
+
+        val fitted = WidgetGrids.fitClockScaleForComposition(
+            composition = comp,
+            clockFace = analogClock,
+            faceOf = { map[it] },
+            largeMaxY = 1.45f,
+            smallMaxY = 1.45f
+        )
+
+        val fittedClock = requireNotNull(fitted.clockItem)
+        assertEquals("Analog clock widthStretch must stay uniform (1.0)", 1f, fittedClock.widthStretch(ItemState.LARGE), 1e-4f)
+        assertEquals("Analog clock heightStretch must stay uniform (1.0)", 1f, fittedClock.heightStretch(ItemState.LARGE), 1e-4f)
+    }
+
+    @Test
+    fun clampClockBoundsToScreenKeepsOffCenterResizedClockInsideEdges() {
+        val clockFace = tallStackedClockFace()
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        var comp = Composition().add(100, large = FacePlacement(0.5f, 1.15f), small = null)
+        // Simulate off-center drag + oversized scale pushing clock past left and bottom bounds
+        val offCenterClock = comp.clockItem!!
+            .with(ItemState.LARGE, FacePlacement(x = -0.10f, y = 0.95f, anchor = FaceAlign.CENTER))
+            .withTransform(ItemState.LARGE, scale = 0.8f, widthStretch = 1f, heightStretch = 1f)
+        comp = comp.copy(items = comp.items.map { if (it.clock) offCenterClock else it })
+
+        val (clampedComp, clampedBounds) = WidgetGrids.clampClockBoundsToScreen(
+            composition = comp,
+            clockFace = clockFace,
+            itemState = ItemState.LARGE,
+            maxY = 1.60f
+        )
+
+        val bounds = requireNotNull(clampedBounds)
+        assertTrue("Clamped clock left must stay inside horizontal safe edge", bounds.left >= 0.02f)
+        assertTrue("Clamped clock right must stay inside horizontal safe edge", bounds.right <= 0.98f)
+        assertTrue("Clamped clock bottom must stay inside bottom safe edge", bounds.bottom <= 1.60f - 0.02f)
+        assertTrue("Clamped composition updated clock placement", clampedComp.clockItem!!.large != offCenterClock.large)
+        assertTrue(
+            "Overlapping clock + widget must report positive layoutPenalty and hasAnyCollision",
+            WidgetGrids.hasAnyCollision(clampedComp, clockFace, { map[it] }, ItemState.LARGE, maxY = 1.60f)
+        )
+    }
+
+    @Test
+    fun faceEditorStretchNodeQuantizesFontAxesToAvoidCacheThrashing() {
+        val layer = FaceLayer("hours", FaceLayerType.HOURS, font = "", width = 100, height = 700)
+        val node = LayerNode("hours", size = 0.4f)
+        val stretchedA = FaceEditor.stretchNode(node, listOf(layer), widthStretch = 1.131f, heightStretch = 1.121f) as LayerNode
+        val stretchedB = FaceEditor.stretchNode(node, listOf(layer), widthStretch = 1.139f, heightStretch = 1.129f) as LayerNode
+
+        assertTrue("Width axis must be quantized to multiples of 5", (stretchedA.width ?: 0) % 5 == 0)
+        assertTrue("Height axis must be quantized to multiples of 8", (stretchedA.height ?: 0) % 8 == 0)
+        assertEquals("Tiny stretch deltas within one quantization step should produce identical axes", stretchedA.width, stretchedB.width)
+        assertEquals("Tiny stretch deltas within one quantization step should produce identical axes", stretchedA.height, stretchedB.height)
+    }
+
     private fun boundsOverlap(a: ItemBounds, b: ItemBounds): Boolean =
         a.left < b.right - 1e-4f && a.right > b.left + 1e-4f && a.top < b.bottom - 1e-4f && a.bottom > b.top + 1e-4f
 

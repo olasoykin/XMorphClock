@@ -24,8 +24,15 @@ class ApplyClockPresetUseCase(
             } else {
                 val withClock = current.withClock()
                 if (preset != null) {
-                    WidgetGrids.reconcileWidgetsForClock(
+                    val fitted = WidgetGrids.fitClockScaleForComposition(
                         composition = withClock,
+                        clockFace = preset.face,
+                        faceOf = { widgetFaces[it] },
+                        largeMaxY = largeMaxY,
+                        smallMaxY = smallMaxY
+                    )
+                    WidgetGrids.reconcileWidgetsForClock(
+                        composition = fitted,
                         clockFace = preset.face,
                         faceOf = { widgetFaces[it] },
                         largeMaxY = largeMaxY,
