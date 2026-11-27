@@ -127,7 +127,7 @@ fun BoxScope.ItemOverlay(
     onInlineRowsChange: (ItemState, Int) -> Unit,
     onDragEnd: () -> Unit,
     onToggleWidgetsPosition: () -> Unit,
-    onMeasured: (Map<Int, ItemBounds>, Float, Map<ItemState, Float>) -> Unit
+    onMeasured: (Map<Int, ItemBounds>, Float, Float, Map<ItemState, Float>, Map<ItemState, Float>) -> Unit
 ) {
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
@@ -213,8 +213,33 @@ fun BoxScope.ItemOverlay(
         rightShortcutRect?.top ?: height
     )
     val safeBottomPx = (shortcutRowTop - slotGap).coerceAtLeast(edgePadPx)
+    val minY = if (unit > 0f) (edgePadPx - frameTop) / unit else 0f
     val maxY = if (unit > 0f) (safeBottomPx - frameTop) / unit else 0f
     val geometry = LocalClockGeometry.current
+    val minYByState = remember(geometry, width, height, edgePadPx) {
+        if (width <= 0f || height <= 0f) {
+            emptyMap()
+        } else {
+            val largeFrame = geometry.frame(1f)
+            val smallFrame = geometry.frame(0f)
+            val largeUnit = width * largeFrame.width
+            val smallUnit = width * smallFrame.width
+            val largeTop = height * largeFrame.top
+            val smallTop = height * smallFrame.top
+            buildMap {
+                if (largeUnit > 0f) {
+                    val largeMin = (edgePadPx - largeTop) / largeUnit
+                    put(ItemState.LARGE, largeMin)
+                    put(ItemState.AOD_LARGE, largeMin)
+                }
+                if (smallUnit > 0f) {
+                    val smallMin = (edgePadPx - smallTop) / smallUnit
+                    put(ItemState.SMALL, smallMin)
+                    put(ItemState.AOD_SMALL, smallMin)
+                }
+            }
+        }
+    }
     val maxYByState = remember(geometry, width, height, safeBottomPx) {
         if (width <= 0f || height <= 0f) {
             emptyMap()
@@ -239,9 +264,9 @@ fun BoxScope.ItemOverlay(
             }
         }
     }
-    LaunchedEffect(settled, itemBounds, maxY, maxYByState) {
+    LaunchedEffect(settled, itemBounds, minY, maxY, minYByState, maxYByState) {
         if (settled && itemBounds.isNotEmpty()) {
-            onMeasured(itemBounds, maxY, maxYByState)
+            onMeasured(itemBounds, minY, maxY, minYByState, maxYByState)
         }
     }
 
@@ -262,12 +287,15 @@ fun BoxScope.ItemOverlay(
 
     val displayGridRect = remember(
         gridRect,
+        clockRect,
+        inlineRect,
         activeTarget,
         composition.gridCols,
         composition.gridRows,
         usedGridRows,
         unit,
         pad,
+        slotGap,
         edgePadPx,
         width,
         safeBottomPx
@@ -277,29 +305,79 @@ fun BoxScope.ItemOverlay(
         else {
             val targetCols = composition.gridCols.coerceIn(1, WidgetGrids.MAX_GRID_COLS)
             val targetRows = composition.gridRows.coerceIn(1, WidgetGrids.MAX_GRID_ROWS)
-            val targetW = unit * FaceGrid.width(targetCols) + pad * 2f
-            val cx = (gridRect.left + gridRect.right) / 2f
-            val maxRight = (width - edgePadPx).coerceAtLeast(edgePadPx + targetW)
-            val desiredLeft = (cx - targetW / 2f).coerceIn(edgePadPx, (maxRight - targetW).coerceAtLeast(edgePadPx))
-            val desiredRight = (desiredLeft + targetW).coerceAtMost(width - edgePadPx)
             val rowStepPx = unit * (FaceGrid.CELL + FaceGrid.GAP)
             val extraRows = (targetRows - usedGridRows).coerceAtLeast(0)
-            val targetBottom = minOf(safeBottomPx, gridRect.bottom + extraRows * rowStepPx)
+            val isAboveClock = clockRect != null && gridRect.centerY() < clockRect.centerY()
+
+            var minAllowedTopPx = edgePadPx
+            var maxAllowedBottomPx = safeBottomPx
+            if (clockRect != null) {
+                if (isAboveClock) {
+                    maxAllowedBottomPx = minOf(maxAllowedBottomPx, clockRect.top - slotGap)
+                } else {
+                    minAllowedTopPx = maxOf(minAllowedTopPx, clockRect.bottom + slotGap)
+                }
+            }
+            if (inlineRect != null) {
+                if (inlineRect.centerY() < gridRect.centerY()) {
+                    minAllowedTopPx = maxOf(minAllowedTopPx, inlineRect.bottom + slotGap)
+                } else {
+                    maxAllowedBottomPx = minOf(maxAllowedBottomPx, inlineRect.top - slotGap)
+                }
+            }
+
+            val targetTop = if (isAboveClock) {
+                maxOf(minAllowedTopPx, gridRect.top - extraRows * rowStepPx).coerceAtMost(gridRect.top)
+            } else {
+                gridRect.top
+            }
+            val targetBottom = if (isAboveClock) {
+                gridRect.bottom
+            } else {
+                minOf(maxAllowedBottomPx, gridRect.bottom + extraRows * rowStepPx).coerceAtLeast(gridRect.bottom)
+            }
+
+            val targetW = unit * FaceGrid.width(targetCols) + pad * 2f
+            val cx = (gridRect.left + gridRect.right) / 2f
+            var leftLimit = edgePadPx
+            var rightLimit = width - edgePadPx
+            listOfNotNull(clockRect, inlineRect).forEach { obs ->
+                val overlapsVertically = targetTop < obs.bottom + slotGap && targetBottom > obs.top - slotGap
+                if (overlapsVertically) {
+                    if (obs.centerX() < cx) {
+                        leftLimit = maxOf(leftLimit, obs.right + slotGap)
+                    } else if (obs.centerX() > cx) {
+                        rightLimit = minOf(rightLimit, obs.left - slotGap)
+                    }
+                }
+            }
+            val effLeftLimit = minOf(leftLimit, gridRect.left)
+            val effRightLimit = maxOf(rightLimit, gridRect.right)
+            val clampedW = minOf(targetW, (effRightLimit - effLeftLimit).coerceAtLeast(gridRect.width()))
+            val desiredLeft = (cx - clampedW / 2f).coerceIn(
+                effLeftLimit,
+                (effRightLimit - clampedW).coerceAtLeast(effLeftLimit)
+            )
+            val desiredRight = (desiredLeft + clampedW).coerceAtMost(effRightLimit)
             RectF(
                 minOf(gridRect.left, desiredLeft),
-                gridRect.top,
+                targetTop,
                 maxOf(gridRect.right, desiredRight),
-                maxOf(gridRect.bottom, targetBottom)
+                targetBottom
             )
         }
     }
 
     val displayInlineRect = remember(
         inlineRect,
+        clockRect,
+        gridRect,
         activeTarget,
         composition.inlineRows,
         usedInlineRows,
         unit,
+        slotGap,
+        edgePadPx,
         safeBottomPx
     ) {
         if (inlineRect == null) null
@@ -308,12 +386,40 @@ fun BoxScope.ItemOverlay(
             val targetRows = composition.inlineRows.coerceIn(1, WidgetGrids.MAX_INLINE_ROWS)
             val rowStepPx = unit * (0.08f + FaceGrid.GAP)
             val extraRows = (targetRows - usedInlineRows).coerceAtLeast(0)
-            val targetBottom = minOf(safeBottomPx, inlineRect.bottom + extraRows * rowStepPx)
+            val isAboveClock = clockRect != null && inlineRect.centerY() < clockRect.centerY()
+
+            var minAllowedTopPx = edgePadPx
+            var maxAllowedBottomPx = safeBottomPx
+            if (clockRect != null) {
+                if (isAboveClock) {
+                    maxAllowedBottomPx = minOf(maxAllowedBottomPx, clockRect.top - slotGap)
+                } else {
+                    minAllowedTopPx = maxOf(minAllowedTopPx, clockRect.bottom + slotGap)
+                }
+            }
+            if (gridRect != null) {
+                if (gridRect.centerY() < inlineRect.centerY()) {
+                    minAllowedTopPx = maxOf(minAllowedTopPx, gridRect.bottom + slotGap)
+                } else {
+                    maxAllowedBottomPx = minOf(maxAllowedBottomPx, gridRect.top - slotGap)
+                }
+            }
+
+            val targetTop = if (isAboveClock) {
+                maxOf(minAllowedTopPx, inlineRect.top - extraRows * rowStepPx).coerceAtMost(inlineRect.top)
+            } else {
+                inlineRect.top
+            }
+            val targetBottom = if (isAboveClock) {
+                inlineRect.bottom
+            } else {
+                minOf(maxAllowedBottomPx, inlineRect.bottom + extraRows * rowStepPx).coerceAtLeast(inlineRect.bottom)
+            }
             RectF(
                 inlineRect.left,
-                inlineRect.top,
+                targetTop,
                 inlineRect.right,
-                maxOf(inlineRect.bottom, targetBottom)
+                targetBottom
             )
         }
     }
@@ -543,14 +649,36 @@ fun BoxScope.ItemOverlay(
                     val clockItemAtDown = currentComposition.clockItem
                     val stateAtDown = currentItemState
                     val startClockPlacement = currentClockPlacement
-                    val startClockScale = clockItemAtDown?.scale(stateAtDown) ?: 1f
-                    val startClockWidthStretch = if (currentClockAnalog) 1f else clockItemAtDown?.widthStretch(stateAtDown) ?: 1f
-                    val startClockHeightStretch = if (currentClockAnalog) 1f else clockItemAtDown?.heightStretch(stateAtDown) ?: 1f
+                    val startClockScale = (clockItemAtDown?.scale(stateAtDown) ?: 1f).coerceAtLeast(0.05f)
+                    val startClockWidthStretch = if (currentClockAnalog) {
+                        1f
+                    } else {
+                        (clockItemAtDown?.widthStretch(stateAtDown) ?: 1f).coerceAtLeast(0.05f)
+                    }
+                    val startClockHeightStretch = if (currentClockAnalog) {
+                        1f
+                    } else {
+                        (clockItemAtDown?.heightStretch(stateAtDown) ?: 1f).coerceAtLeast(0.05f)
+                    }
+                    val resizeObstaclesPx = if (resizeHit?.first == LockTarget.CLOCK) {
+                        listOfNotNull(
+                            currentDraggables[LockTarget.WIDGET_GRID],
+                            currentDraggables[LockTarget.INLINE_GRID],
+                            if (!currentIsAod) currentLeftShortcut else null,
+                            if (!currentIsAod) currentRightShortcut else null
+                        ).map { it.padded(slotGap) }
+                    } else {
+                        emptyList()
+                    }
                     val startGridCols = currentComposition.gridCols
                     val startGridRows = currentComposition.gridRows
                     val startInlineRows = currentComposition.inlineRows
                     var lastSentGridSize = startGridCols to startGridRows
                     var lastSentInlineRows = startInlineRows
+                    var lastSentClockScale = Float.NaN
+                    var lastSentClockWStretch = Float.NaN
+                    var lastSentClockHStretch = Float.NaN
+                    var lastSentClockPlacement: FacePlacement? = null
 
                     liveGridDocked = currentComposition.gridDocked
                     liveInlineDocked = currentComposition.inlineDocked
@@ -643,6 +771,36 @@ fun BoxScope.ItemOverlay(
                                         return startClockPlacement.copy(x = nextX, y = nextY)
                                     }
 
+                                    fun emitClockTransformIfChanged(
+                                        nextScale: Float,
+                                        nextWStretch: Float,
+                                        nextHStretch: Float,
+                                        nextPlacement: FacePlacement
+                                    ) {
+                                        val prevP = lastSentClockPlacement
+                                        val placementChanged = prevP == null ||
+                                            prevP.anchor != nextPlacement.anchor ||
+                                            abs(prevP.x - nextPlacement.x) > 0.001f ||
+                                            abs(prevP.y - nextPlacement.y) > 0.001f
+                                        val transformChanged = lastSentClockScale.isNaN() ||
+                                            abs(lastSentClockScale - nextScale) > 0.002f ||
+                                            abs(lastSentClockWStretch - nextWStretch) > 0.002f ||
+                                            abs(lastSentClockHStretch - nextHStretch) > 0.002f
+                                        if (placementChanged || transformChanged) {
+                                            lastSentClockScale = nextScale
+                                            lastSentClockWStretch = nextWStretch
+                                            lastSentClockHStretch = nextHStretch
+                                            lastSentClockPlacement = nextPlacement
+                                            currentClockTransform(
+                                                currentItemState,
+                                                nextScale,
+                                                nextWStretch,
+                                                nextHStretch,
+                                                nextPlacement
+                                            )
+                                        }
+                                    }
+
                                     when (handle) {
                                         ResizeHandle.TOP_LEFT,
                                         ResizeHandle.TOP_RIGHT,
@@ -653,19 +811,30 @@ fun BoxScope.ItemOverlay(
                                             val rawFactor = (rx + ry) * 0.5f
                                             val maxFactor = minOf(MAX_CLOCK_SCALE / startClockScale, growthLimitW, growthLimitH)
                                             val minFactor = maxOf(MIN_CLOCK_SCALE / startClockScale, minTouch / minOf(rawW, rawH))
-                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val factor = maxNonOverlappingFactor(
+                                                desiredFactor = rawFactor,
+                                                minFactorBound = minFactor,
+                                                maxFactorBound = maxFactor,
+                                                startRaw = startRaw,
+                                                obstacles = resizeObstaclesPx
+                                            ) { f ->
+                                                val w = rawW * f
+                                                val h = rawH * f
+                                                val l = if (sx > 0f) startRaw.left else startRaw.right - w
+                                                val t = if (sy > 0f) startRaw.top else startRaw.bottom - h
+                                                RectF(l, t, l + w, t + h)
+                                            }
                                             val nextScale = (startClockScale * factor).coerceIn(MIN_CLOCK_SCALE, MAX_CLOCK_SCALE)
                                             val actualFactor = (nextScale / startClockScale).coerceAtLeast(0.01f)
                                             val actualW = rawW * actualFactor
                                             val actualH = rawH * actualFactor
                                             val actualLeft = if (sx > 0f) startRaw.left else startRaw.right - actualW
                                             val actualTop = if (sy > 0f) startRaw.top else startRaw.bottom - actualH
-                                            currentClockTransform(
-                                                currentItemState,
-                                                nextScale,
-                                                startClockWidthStretch,
-                                                startClockHeightStretch,
-                                                placedFor(actualLeft, actualLeft + actualW, actualTop)
+                                            emitClockTransformIfChanged(
+                                                nextScale = nextScale,
+                                                nextWStretch = startClockWidthStretch,
+                                                nextHStretch = startClockHeightStretch,
+                                                nextPlacement = placedFor(actualLeft, actualLeft + actualW, actualTop)
                                             )
                                         }
 
@@ -673,17 +842,26 @@ fun BoxScope.ItemOverlay(
                                             val rawFactor = (rawW + sx * totalPx.x) / rawW
                                             val maxFactor = minOf(MAX_CLOCK_STRETCH / startClockWidthStretch, growthLimitW)
                                             val minFactor = maxOf(MIN_CLOCK_STRETCH / startClockWidthStretch, minTouch / rawW)
-                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val factor = maxNonOverlappingFactor(
+                                                desiredFactor = rawFactor,
+                                                minFactorBound = minFactor,
+                                                maxFactorBound = maxFactor,
+                                                startRaw = startRaw,
+                                                obstacles = resizeObstaclesPx
+                                            ) { f ->
+                                                val w = rawW * f
+                                                val l = if (sx > 0f) startRaw.left else startRaw.right - w
+                                                RectF(l, startRaw.top, l + w, startRaw.bottom)
+                                            }
                                             val nextWidthStretch = (startClockWidthStretch * factor).coerceIn(MIN_CLOCK_STRETCH, MAX_CLOCK_STRETCH)
                                             val actualFactor = (nextWidthStretch / startClockWidthStretch).coerceAtLeast(0.01f)
                                             val actualW = rawW * actualFactor
                                             val actualLeft = if (sx > 0f) startRaw.left else startRaw.right - actualW
-                                            currentClockTransform(
-                                                currentItemState,
-                                                startClockScale,
-                                                nextWidthStretch,
-                                                startClockHeightStretch,
-                                                placedFor(actualLeft, actualLeft + actualW, startRaw.top)
+                                            emitClockTransformIfChanged(
+                                                nextScale = startClockScale,
+                                                nextWStretch = nextWidthStretch,
+                                                nextHStretch = startClockHeightStretch,
+                                                nextPlacement = placedFor(actualLeft, actualLeft + actualW, startRaw.top)
                                             )
                                         }
 
@@ -691,17 +869,26 @@ fun BoxScope.ItemOverlay(
                                             val rawFactor = (rawH + sy * totalPx.y) / rawH
                                             val maxFactor = minOf(MAX_CLOCK_STRETCH / startClockHeightStretch, growthLimitH)
                                             val minFactor = maxOf(MIN_CLOCK_STRETCH / startClockHeightStretch, minTouch / rawH)
-                                            val factor = rawFactor.coerceIn(minOf(minFactor, 1f), maxOf(1f, maxFactor))
+                                            val factor = maxNonOverlappingFactor(
+                                                desiredFactor = rawFactor,
+                                                minFactorBound = minFactor,
+                                                maxFactorBound = maxFactor,
+                                                startRaw = startRaw,
+                                                obstacles = resizeObstaclesPx
+                                            ) { f ->
+                                                val h = rawH * f
+                                                val t = if (sy > 0f) startRaw.top else startRaw.bottom - h
+                                                RectF(startRaw.left, t, startRaw.right, t + h)
+                                            }
                                             val nextHeightStretch = (startClockHeightStretch * factor).coerceIn(MIN_CLOCK_STRETCH, MAX_CLOCK_STRETCH)
                                             val actualFactor = (nextHeightStretch / startClockHeightStretch).coerceAtLeast(0.01f)
                                             val actualH = rawH * actualFactor
                                             val actualTop = if (sy > 0f) startRaw.top else startRaw.bottom - actualH
-                                            currentClockTransform(
-                                                currentItemState,
-                                                startClockScale,
-                                                startClockWidthStretch,
-                                                nextHeightStretch,
-                                                placedFor(startRaw.left, startRaw.right, actualTop)
+                                            emitClockTransformIfChanged(
+                                                nextScale = startClockScale,
+                                                nextWStretch = startClockWidthStretch,
+                                                nextHStretch = nextHeightStretch,
+                                                nextPlacement = placedFor(startRaw.left, startRaw.right, actualTop)
                                             )
                                         }
                                     }
@@ -1396,6 +1583,42 @@ private fun RectF.containsWithSlop(position: Offset, slop: Float): Boolean =
 
 private fun RectF.toBounds(originX: Float, originY: Float, unit: Float): ItemBounds =
     ItemBounds((left - originX) / unit, (top - originY) / unit, (right - originX) / unit, (bottom - originY) / unit)
+
+private fun rectOverlapArea(a: RectF, b: RectF): Float {
+    val ox = (minOf(a.right, b.right) - maxOf(a.left, b.left)).coerceAtLeast(0f)
+    val oy = (minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)).coerceAtLeast(0f)
+    return ox * oy
+}
+
+private fun maxNonOverlappingFactor(
+    desiredFactor: Float,
+    minFactorBound: Float,
+    maxFactorBound: Float,
+    startRaw: RectF,
+    obstacles: List<RectF>,
+    rectForFactor: (Float) -> RectF
+): Float {
+    val loBound = minOf(minFactorBound, 1f)
+    val hiBound = maxOf(1f, maxFactorBound)
+    val clamped = desiredFactor.coerceIn(loBound, hiBound)
+    if (clamped <= 1f || obstacles.isEmpty()) return clamped
+
+    fun collides(f: Float): Boolean {
+        val cand = rectForFactor(f)
+        return obstacles.any { obs ->
+            rectOverlapArea(cand, obs) > rectOverlapArea(startRaw, obs) + 1f
+        }
+    }
+
+    if (!collides(clamped)) return clamped
+    var lo = 1f
+    var hi = clamped
+    repeat(8) {
+        val mid = (lo + hi) * 0.5f
+        if (collides(mid)) hi = mid else lo = mid
+    }
+    return lo
+}
 
 private val BOX_PAD = 6.dp
 private val SLOT_GAP = 12.dp

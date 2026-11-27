@@ -1252,6 +1252,237 @@ class WidgetGridsTest {
         assertEquals("Tiny stretch deltas within one quantization step should produce identical axes", stretchedA.height, stretchedB.height)
     }
 
+    @Test
+    fun fitClockScaleForCompositionDoesNotCrashWhenScaleOrStretchBelowAutoFitFloors() {
+        val oversizedClock = tallStackedClockFace()
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        val baseComp = Composition(gridDocked = true, widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 1.30f), small = FacePlacement(0.5f, 0.35f))
+        val minStretchedClock = baseComp.clockItem!!
+            .withTransform(ItemState.LARGE, scale = 0.40f, widthStretch = 0.45f, heightStretch = 0.45f)
+            .withTransform(ItemState.SMALL, scale = 0.35f, widthStretch = 0.45f, heightStretch = 0.45f)
+        val comp = baseComp.copy(items = baseComp.items.map { if (it.clock) minStretchedClock else it })
+
+        val fitted = WidgetGrids.fitClockScaleForComposition(
+            composition = comp,
+            clockFace = oversizedClock,
+            faceOf = { map[it] },
+            largeMaxY = 0.90f,
+            smallMaxY = 0.90f,
+            largeClockBounds = ItemBounds(left = 0.01f, top = 0.05f, right = 0.99f, bottom = 0.95f),
+            smallClockBounds = ItemBounds(left = 0.01f, top = 0.05f, right = 0.99f, bottom = 0.85f),
+            largeMinY = -0.18f,
+            smallMinY = -0.14f
+        )
+
+        val fittedClock = requireNotNull(fitted.clockItem)
+        assertEquals(0.40f, fittedClock.scale(ItemState.LARGE), 1e-4f)
+        assertEquals(0.45f, fittedClock.widthStretch(ItemState.LARGE), 1e-4f)
+        assertEquals(0.45f, fittedClock.heightStretch(ItemState.LARGE), 1e-4f)
+    }
+
+    @Test
+    fun negativeMinYAllowsTopAlignedClockAtZeroYWithoutShiftingOrColliding() {
+        val clockFace = tallStackedClockFace()
+        val comp = Composition()
+        val topAlignedBounds = ItemBounds(left = 0.15f, top = -0.02f, right = 0.85f, bottom = 0.65f)
+
+        val (clampedComp, clampedBounds) = WidgetGrids.clampClockBoundsToScreen(
+            composition = comp,
+            clockFace = clockFace,
+            itemState = ItemState.LARGE,
+            maxY = 1.65f,
+            clockBoundsOverride = topAlignedBounds,
+            minY = -0.18f
+        )
+
+        assertEquals(topAlignedBounds, clampedBounds)
+        assertEquals(comp, clampedComp)
+        assertFalse(
+            "Top-aligned clock within negative minY frame origin must not report collision",
+            WidgetGrids.hasAnyCollision(
+                composition = comp,
+                clockFace = clockFace,
+                faceOf = { null },
+                itemState = ItemState.LARGE,
+                maxY = 1.65f,
+                clockBoundsOverride = topAlignedBounds,
+                minY = -0.18f
+            )
+        )
+        val fitted = WidgetGrids.fitClockScaleForComposition(
+            composition = comp,
+            clockFace = clockFace,
+            faceOf = { null },
+            largeMaxY = 1.65f,
+            smallMaxY = 1.65f,
+            largeClockBounds = topAlignedBounds,
+            largeMinY = -0.18f,
+            smallMinY = -0.14f
+        )
+        assertEquals(1f, fitted.clockItem!!.scale(ItemState.LARGE), 1e-4f)
+    }
+
+    @Test
+    fun maxFittingGridRowsAndInlineRowsRespectRealClockAndSiblingHeight() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+        val tallClockBounds = ItemBounds(left = 0.10f, top = 0.05f, right = 0.90f, bottom = 1.15f)
+        // maxY = 1.50 -> maxBottom = 1.4775, minY = 0.02, clockH = 1.10, inline + gap = 0.12
+        // remaining for grid = 1.4775 - 0.02 - 1.10 - 0.04 - 0.12 = 0.1975 -> fits 1 grid row (0.171), NOT 2 rows (0.3735)!
+        val comp = Composition(gridCols = 4, gridRows = 1, inlineRows = 1)
+            .add(100, large = FacePlacement(0.5f, 1.19f), small = null)
+            .add(200, large = FacePlacement(0.5f, 1.39f), small = null)
+
+        val maxGrid = WidgetGrids.maxFittingGridRows(
+            composition = comp,
+            faceOf = { map[it] },
+            maxY = 1.50f,
+            clockBounds = tallClockBounds,
+            minY = 0.02f
+        )
+        val maxInline = WidgetGrids.maxFittingInlineRows(
+            composition = comp,
+            faceOf = { map[it] },
+            maxY = 1.50f,
+            clockBounds = tallClockBounds,
+            minY = 0.02f
+        )
+
+        assertEquals(1, maxGrid)
+        assertEquals(1, maxInline)
+    }
+
+    @Test
+    fun layoutWithReservedGridSizeRejectsRowExpansionWhenNoVerticalSpaceRemains() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+        val clockBounds = ItemBounds(left = 0.10f, top = 0.02f, right = 0.90f, bottom = 1.10f)
+        val comp = Composition(gridCols = 4, gridRows = 1, inlineRows = 1)
+            .add(100, large = FacePlacement(0.5f, 1.14f), small = null)
+            .add(200, large = FacePlacement(0.5f, 1.35f), small = null)
+
+        val expanded = WidgetGrids.layoutWithReservedGridSize(
+            composition = comp,
+            cols = 4,
+            rows = 2,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBounds = clockBounds,
+            clockFace = null,
+            minY = 0.02f,
+            maxY = 1.50f
+        )
+
+        assertEquals("Expanding to 2 rows when only 1 fits must be rejected", null, expanded)
+    }
+
+    @Test
+    fun canAddBlocksExtraRowWidgetsWhenClockAndSiblingLeaveNoSpace() {
+        val g1 = face("G1", category = "small", span = 2)
+        val g2 = face("G2", category = "small", span = 2)
+        val g3 = face("G3", category = "small", span = 1)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 101 to g2, 102 to g3, 200 to in1)
+        val clockBounds = ItemBounds(left = 0.10f, top = 0.02f, right = 0.90f, bottom = 1.12f)
+        // Even if gridRows is set to 2, clock + inline leave room for only 1 grid row
+        val comp = Composition(gridCols = 4, gridRows = 2)
+            .add(100, large = FacePlacement(0.3f, 1.16f), small = null)
+            .add(101, large = FacePlacement(0.7f, 1.16f), small = null)
+            .add(200, large = FacePlacement(0.5f, 1.36f), small = null)
+
+        assertFalse(
+            WidgetGrids.canAdd(
+                composition = comp,
+                face = g3,
+                faceOf = { map[it] },
+                maxY = 1.50f,
+                clockBounds = clockBounds,
+                minY = 0.02f
+            )
+        )
+    }
+
+    @Test
+    fun layoutZoneReserveEmptyRowsKeepsInlineOutsideEmptyGridRowsBelowAndAboveClock() {
+        val g1 = face("G1", category = "small", span = 2)
+        val in1 = face("I1", category = "inline", height = 0.08f)
+        val map = mapOf(100 to g1, 200 to in1)
+
+        // Below clock: grid has 1 placed row but gridRows = 2
+        val clockBelow = ItemBounds(left = 0.10f, top = 0.10f, right = 0.90f, bottom = 0.45f)
+        val compBelow = Composition(gridCols = 4, gridRows = 2, widgetsAbove = false)
+            .add(100, large = FacePlacement(0.5f, 0.49f), small = null)
+            .add(200, large = FacePlacement(0.5f, 0.70f), small = null)
+        val laidOutBelow = WidgetGrids.layoutWithReservedGridSize(
+            composition = compBelow,
+            cols = 4,
+            rows = 2,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBounds = clockBelow,
+            clockFace = null,
+            minY = 0.02f,
+            maxY = 1.65f
+        )!!
+        val gridBelowY = WidgetGrids.gridItems(laidOutBelow) { map[it] }.first().large!!.y
+        val inlineBelowY = WidgetGrids.inlineItems(laidOutBelow) { map[it] }.first().large!!.y
+        val twoRowGridHeight = FaceGrid.CELL * 2f + FaceGrid.GAP
+        assertTrue(
+            "Inline below clock must sit below BOTH row 1 and empty row 2 (gridY=$gridBelowY, inlineY=$inlineBelowY)",
+            inlineBelowY >= gridBelowY + twoRowGridHeight
+        )
+
+        // Above clock: grid has 1 placed row but gridRows = 2 -> empty row sits above row 1, inline sits above empty row
+        val clockAbove = ItemBounds(left = 0.10f, top = 0.75f, right = 0.90f, bottom = 1.15f)
+        val compAbove = Composition(gridCols = 4, gridRows = 2, widgetsAbove = true)
+            .add(100, large = FacePlacement(0.5f, 0.50f), small = null)
+            .add(200, large = FacePlacement(0.5f, 0.35f), small = null)
+        val laidOutAbove = WidgetGrids.layoutWithReservedGridSize(
+            composition = compAbove,
+            cols = 4,
+            rows = 2,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBounds = clockAbove,
+            clockFace = null,
+            minY = 0.02f,
+            maxY = 1.65f
+        )!!
+        val gridAboveY = WidgetGrids.gridItems(laidOutAbove) { map[it] }.first().large!!.y
+        val inlineAboveY = WidgetGrids.inlineItems(laidOutAbove) { map[it] }.first().large!!.y
+        val emptyTop = gridAboveY - (FaceGrid.CELL + FaceGrid.GAP)
+        assertTrue(
+            "Inline above clock must sit above the empty grid row above row 1 (inlineBottom=${inlineAboveY + 0.08f}, emptyTop=$emptyTop)",
+            inlineAboveY + 0.08f <= emptyTop
+        )
+    }
+
+    @Test
+    fun trimEmptyWidgetRowsToFitReducesUnusedCapacityAfterClockEnlarges() {
+        val g1 = face("G1", category = "small", span = 2)
+        val map = mapOf(100 to g1)
+        val bigClockBounds = ItemBounds(left = 0.10f, top = 0.05f, right = 0.90f, bottom = 1.25f)
+        // Grid originally had 3 rows (only 1 used), then clock grew huge leaving room for only 1 row
+        val comp = Composition(gridCols = 4, gridRows = 3)
+            .add(100, large = FacePlacement(0.5f, 1.29f), small = null)
+
+        val trimmed = WidgetGrids.trimEmptyWidgetRowsToFit(
+            composition = comp,
+            itemState = ItemState.LARGE,
+            faceOf = { map[it] },
+            clockBounds = bigClockBounds,
+            minY = 0.02f,
+            maxY = 1.55f
+        )
+
+        assertEquals(1, trimmed.gridRows)
+        assertEquals(4, trimmed.gridCapacity)
+    }
+
     private fun boundsOverlap(a: ItemBounds, b: ItemBounds): Boolean =
         a.left < b.right - 1e-4f && a.right > b.left + 1e-4f && a.top < b.bottom - 1e-4f && a.bottom > b.top + 1e-4f
 

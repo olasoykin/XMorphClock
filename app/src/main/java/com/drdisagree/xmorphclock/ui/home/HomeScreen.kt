@@ -784,8 +784,8 @@ private fun HomePreview(state: HomeUiState, viewModel: HomeViewModel) {
                     onInlineRowsChange = viewModel::onInlineRowsChange,
                     onDragEnd = viewModel::onTargetDragEnd,
                     onToggleWidgetsPosition = viewModel::onToggleWidgetsPosition,
-                    onMeasured = { bounds, maxY, maxYByState ->
-                        viewModel.onItemsMeasured(itemState, bounds, maxY, maxYByState)
+                    onMeasured = { bounds, minY, maxY, minYByState, maxYByState ->
+                        viewModel.onItemsMeasured(itemState, bounds, minY, maxY, minYByState, maxYByState)
                     }
                 )
             }
